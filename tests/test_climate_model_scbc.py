@@ -5,7 +5,7 @@ import numpy as np
 import torch
 from gymnasium import spaces
 
-from fedrain.api import FedRAINAPI
+from fedrain.api import FedRAIN
 
 MAX_EPISODE_STEPS = 200
 TOTAL_TIMESTEPS = 2000
@@ -99,7 +99,7 @@ def test_scbc_episodic_return_matches_expected():
     envs = gym.vector.SyncVectorEnv(
         [make_env(SimpleClimateBiasCorrectionEnv, seed, MAX_EPISODE_STEPS)]
     )
-    api = FedRAINAPI()
+    api = FedRAIN()
     agent = api.set_algorithm(
         "DDPG",
         envs=envs,

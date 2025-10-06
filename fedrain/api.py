@@ -1,7 +1,7 @@
 from fedrain.algorithms.ddpg import DDPG
 
 
-class FedRAINAPI:
+class FedRAIN:
     """
     Main API for climate RL users to interact with FedRAIN algorithms.
     """

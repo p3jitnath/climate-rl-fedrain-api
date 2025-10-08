@@ -1,4 +1,5 @@
 import random
+from glob import glob
 
 import gymnasium as gym
 import numpy as np
@@ -6,10 +7,28 @@ import torch
 from gymnasium import spaces
 
 from fedrain.api import FedRAIN
+from tests.utils import retrieve_tfrecord_data
 
+EPISODES = 10
 MAX_EPISODE_STEPS = 200
 TOTAL_TIMESTEPS = 2000
-ACTOR_LAYER_SIZE, CRITIC_LAYER_SIZE = 64, 64
+
+EXP_ID = "scbc-v0-optim-L-60k"
+SEED = 1
+
+CONFIG = {
+    "learning_rate": 0.0046327801811340335,
+    "tau": 0.07340809018042468,
+    "batch_size": 128,
+    "exploration_noise": 0.10076614958209602,
+    "policy_frequency": 10,
+    "noise_clip": 0.1,
+    "actor_critic_layer_size": 128,
+}
+
+test_data = retrieve_tfrecord_data(
+    "ddpg", glob(f"tests/runs/{EXP_ID}*/*/*tfevents*")[0]
+)
 
 
 class SimpleClimateBiasCorrectionEnv(gym.Env):
@@ -90,27 +109,30 @@ def make_env(env_class, seed, max_episode_steps):
 
 def test_scbc_episodic_return_matches_expected():
 
-    seed = 1
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
+    random.seed(SEED)
+    np.random.seed(SEED)
+    torch.manual_seed(SEED)
     torch.backends.cudnn.deterministic = True
 
     envs = gym.vector.SyncVectorEnv(
-        [make_env(SimpleClimateBiasCorrectionEnv, seed, MAX_EPISODE_STEPS)]
+        [make_env(SimpleClimateBiasCorrectionEnv, SEED, MAX_EPISODE_STEPS)]
     )
     api = FedRAIN()
+
+    params = CONFIG.copy()
+    ac_size = params.pop("actor_critic_layer_size", None)
+    params["actor_layer_size"] = params["critic_layer_size"] = ac_size
+
     agent = api.set_algorithm(
         "DDPG",
         envs=envs,
-        seed=seed,
-        actor_layer_size=ACTOR_LAYER_SIZE,
-        critic_layer_size=CRITIC_LAYER_SIZE,
+        seed=SEED,
+        **params,
     )
 
     obs, _ = envs.reset()
     episodic_returns = []
-    for t in range(1, TOTAL_TIMESTEPS + 1):
+    for t in range(1, EPISODES * MAX_EPISODE_STEPS + 1):
         actions = agent.predict(obs)
         next_obs, rewards, terminations, truncations, infos = envs.step(actions)
         agent.update(actions, next_obs, rewards, terminations, truncations, infos)
@@ -127,7 +149,7 @@ def test_scbc_episodic_return_matches_expected():
     assert episodic_returns, "No episodic return was recorded during the run"
     last_return = episodic_returns[-1][0]
 
-    expected = -0.27736583
+    expected = test_data[1][EPISODES - 1]["episodic_return"]
     assert np.isclose(
         last_return, expected, atol=1e-8, rtol=1e-6
     ), f"episodic_return {last_return} != expected {expected}"

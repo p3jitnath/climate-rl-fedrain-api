@@ -1,3 +1,5 @@
+import logging
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -5,7 +7,8 @@ import torch.nn.functional as F
 import torch.optim as optim
 from stable_baselines3.common.buffers import ReplayBuffer
 
-from .base import BaseAlgorithm
+from fedrain.algorithms.base import BaseAlgorithm
+from fedrain.utils import setup_logger
 
 
 class DDPGActor(nn.Module):
@@ -74,6 +77,7 @@ class DDPG(BaseAlgorithm):
         actor_layer_size=256,
         critic_layer_size=256,
         device="cpu",
+        level=logging.DEBUG,
     ):
         super().__init__()
 
@@ -91,6 +95,7 @@ class DDPG(BaseAlgorithm):
         self.actor_layer_size = actor_layer_size
         self.critic_layer_size = critic_layer_size
         self.device = device
+        self.logger = setup_logger("DDPG", level)
 
         self.actor = DDPGActor(self.envs, self.actor_layer_size).to(self.device)
         self.qf1 = DDPGCritic(self.envs, self.critic_layer_size).to(self.device)
@@ -146,9 +151,8 @@ class DDPG(BaseAlgorithm):
 
         if "final_info" in infos:
             for info in infos["final_info"]:
-                print(
-                    f"seed={self.seed}, global_step={self.global_step}, episodic_return={info['episode']['r']}",
-                    flush=True,
+                self.logger.debug(
+                    f"seed={self.seed}, global_step={self.global_step}, episodic_return={info['episode']['r']}"
                 )
                 break
 

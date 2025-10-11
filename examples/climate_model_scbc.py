@@ -7,6 +7,7 @@ import torch
 from gymnasium import spaces
 
 from fedrain.api import FedRAIN
+from fedrain.utils import make_env
 
 MAX_EPISODE_STEPS = 200
 TOTAL_TIMESTEPS = 2000
@@ -173,17 +174,6 @@ class SimpleClimateBiasCorrectionEnv(gym.Env):
             pygame.quit()
             self.screen = None
             self.clock = None
-
-
-def make_env(env_class, seed, max_episode_steps):
-    def thunk():
-        env = env_class()
-        env = gym.wrappers.TimeLimit(env, max_episode_steps=max_episode_steps)
-        env = gym.wrappers.RecordEpisodeStatistics(env)
-        env.action_space.seed(seed)
-        return env
-
-    return thunk
 
 
 def run_scbc(seed):

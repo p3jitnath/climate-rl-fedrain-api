@@ -1,3 +1,4 @@
+import logging
 import random
 from glob import glob
 
@@ -7,6 +8,7 @@ import torch
 from gymnasium import spaces
 
 from fedrain.api import FedRAIN
+from fedrain.utils import make_env
 from tests.utils import retrieve_tfrecord_data
 
 EPISODES = 10
@@ -96,17 +98,6 @@ class SimpleClimateBiasCorrectionEnv(gym.Env):
         return np.array([temperature], dtype=np.float32)
 
 
-def make_env(env_class, seed, max_episode_steps):
-    def thunk():
-        env = env_class()
-        env = gym.wrappers.TimeLimit(env, max_episode_steps=max_episode_steps)
-        env = gym.wrappers.RecordEpisodeStatistics(env)
-        env.action_space.seed(seed)
-        return env
-
-    return thunk
-
-
 def test_scbc_episodic_return_matches_expected():
 
     random.seed(SEED)
@@ -117,17 +108,14 @@ def test_scbc_episodic_return_matches_expected():
     envs = gym.vector.SyncVectorEnv(
         [make_env(SimpleClimateBiasCorrectionEnv, SEED, MAX_EPISODE_STEPS)]
     )
-    api = FedRAIN()
 
     params = CONFIG.copy()
     ac_size = params.pop("actor_critic_layer_size", None)
     params["actor_layer_size"] = params["critic_layer_size"] = ac_size
 
+    api = FedRAIN()
     agent = api.set_algorithm(
-        "DDPG",
-        envs=envs,
-        seed=SEED,
-        **params,
+        "DDPG", envs=envs, seed=SEED, **params, level=logging.INFO
     )
 
     obs, _ = envs.reset()

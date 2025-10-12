@@ -8,6 +8,7 @@ import torch.optim as optim
 from stable_baselines3.common.buffers import ReplayBuffer
 
 from fedrain.algorithms.base import BaseAlgorithm
+from fedrain.fedrl import FedRL
 from fedrain.utils import setup_logger
 
 
@@ -78,6 +79,7 @@ class DDPG(BaseAlgorithm):
         critic_layer_size=256,
         device="cpu",
         level=logging.DEBUG,
+        fedRLConfig=None,
     ):
         super().__init__()
 
@@ -120,6 +122,12 @@ class DDPG(BaseAlgorithm):
             handle_timeout_termination=False,
         )
 
+        self.fedRLConfig = fedRLConfig
+        if self.fedRLConfig is not None:
+            self.fedRL = FedRL(self.actor, self.fedRLConfig["cid"], self.logger)
+            self.fedRL.save_weights(0)
+            self.fedRL.load_weights(0)
+
         self.obs, _ = envs.reset(seed=self.seed)
         self.global_step = 1
 
@@ -151,9 +159,14 @@ class DDPG(BaseAlgorithm):
 
         if "final_info" in infos:
             for info in infos["final_info"]:
-                self.logger.debug(
-                    f"seed={self.seed}, global_step={self.global_step}, episodic_return={info['episode']['r']}"
-                )
+                if self.fedRLConfig:
+                    self.logger.debug(
+                        f"seed={self.seed}, cid={self.fedRLConfig['cid']}, global_step={self.global_step}, episodic_return={info['episode']['r']}"
+                    )
+                else:
+                    self.logger.debug(
+                        f"seed={self.seed}, global_step={self.global_step}, episodic_return={info['episode']['r']}"
+                    )
                 break
 
         real_next_obs = next_obs.copy()
@@ -204,5 +217,17 @@ class DDPG(BaseAlgorithm):
                     target_param.data.copy_(
                         self.tau * param.data + (1 - self.tau) * target_param.data
                     )
+
+        if self.fedRLConfig is not None and "final_info" in infos:
+            if (
+                self.global_step
+                % (self.fedRLConfig["flwr_episodes"] * self.fedRLConfig["num_steps"])
+                == 0
+            ):
+                # self.logger.debug(f"{self.seed} - Saving local weights")
+                self.fedRL.save_weights(self.global_step)
+
+                # self.logger.debug(f"{self.seed} - Loading global weights")
+                self.fedRL.load_weights(self.global_step)
 
         self.global_step += 1

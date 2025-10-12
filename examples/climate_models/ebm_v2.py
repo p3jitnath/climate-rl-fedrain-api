@@ -1,47 +1,50 @@
+import functools
+import logging
 import os
-import random
 
 import climlab
 import gymnasium as gym
 import matplotlib.pyplot as plt
 import numpy as np
-import torch
 import xarray as xr
 from gymnasium import spaces
 from matplotlib.gridspec import GridSpec
+from smartredis import Client
 
+from fedrain.algorithms.ddpg import DDPGActor
 from fedrain.api import FedRAIN
-from fedrain.utils import make_env
+from fedrain.fedrl.server import FLWRServer
+from fedrain.utils import make_env, set_seed, setup_logger
 
 EBM_LATITUDES = 96
+NUM_CLIENTS = 2
+EBM_SUBLATITUDES = EBM_LATITUDES // NUM_CLIENTS
 
-MAX_EPISODE_STEPS = 200
-TOTAL_TIMESTEPS = 2000
+NUM_STEPS = 200
+TOTAL_TIMESTEPS = 5000
+FLWR_EPISODES = 5
 ACTOR_LAYER_SIZE, CRITIC_LAYER_SIZE = 64, 64
 
 
 class EBMUtils:
-    BASE_DIR = "."
+
+    BASE_DIR = "/gws/nopw/j04/ai4er/users/pn341/climate-rl-fedrl"
     DATASETS_DIR = f"{BASE_DIR}/datasets"
 
     fp_Ts = f"{DATASETS_DIR}/skt.sfc.mon.1981-2010.ltm.nc"
-    fp_ulwrf = f"{DATASETS_DIR}/ulwrf.ntat.mon.1981-2010.ltm.nc"
-    fp_dswrf = f"{DATASETS_DIR}/dswrf.ntat.mon.1981-2010.ltm.nc"
-    fp_uswrf = f"{DATASETS_DIR}/uswrf.ntat.mon.1981-2010.ltm.nc"
-
     ncep_url = (
         "http://www.esrl.noaa.gov/psd/thredds/dodsC/Datasets/ncep.reanalysis.derived/"
     )
 
-    @staticmethod
     def download_and_save_dataset(url, filepath, dataset_name):
+        logger = setup_logger("DATASET", logging.DEBUG)
         if not os.path.exists(filepath):
-            print(f"Downloading {dataset_name} data ...", flush=True)
+            logger.debug(f"Downloading {dataset_name} data ...")
             dataset = xr.open_dataset(url, decode_times=False)
             dataset.to_netcdf(filepath, format="NETCDF3_64BIT")
-            print(f"{dataset_name} data saved to {filepath}", flush=True)
+            logger.debug(f"{dataset_name} data saved to {filepath}")
         else:
-            print(f"Loading {dataset_name} data ...", flush=True)
+            logger.debug(f"Loading {dataset_name} data ...")
             dataset = xr.open_dataset(
                 filepath,
                 decode_times=xr.coders.CFDatetimeCoder(use_cftime=True),
@@ -53,28 +56,10 @@ class EBMUtils:
         fp_Ts,
         "NCEP surface temperature",
     ).sortby("lat")
-    ncep_ulwrf = download_and_save_dataset(
-        ncep_url + "other_gauss/ulwrf.ntat.mon.1981-2010.ltm.nc",
-        fp_ulwrf,
-        "NCEP upwelling longwave radiation",
-    ).sortby("lat")
-    ncep_dswrf = download_and_save_dataset(
-        ncep_url + "other_gauss/dswrf.ntat.mon.1981-2010.ltm.nc",
-        fp_dswrf,
-        "NCEP downwelling shortwave radiation",
-    ).sortby("lat")
-    ncep_uswrf = download_and_save_dataset(
-        ncep_url + "other_gauss/uswrf.ntat.mon.1981-2010.ltm.nc",
-        fp_uswrf,
-        "NCEP upwelling shortwave radiation",
-    ).sortby("lat")
 
     lat_ncep = ncep_Ts.lat
     lon_ncep = ncep_Ts.lon
     Ts_ncep_annual = ncep_Ts.skt.mean(dim=("lon", "time"))
-
-    OLR_ncep_annual = ncep_ulwrf.ulwrf.mean(dim=("lon", "time"))
-    ASR_ncep_annual = (ncep_dswrf.dswrf - ncep_uswrf.uswrf).mean(dim=("lon", "time"))
 
     a0_ref = 0.354
     a2_ref = 0.25
@@ -84,13 +69,21 @@ class EBMUtils:
 
 
 class EnergyBalanceModelEnv(gym.Env):
+
     metadata = {
         "render_modes": ["human", "rgb_array"],
         "render_fps": 30,
     }
 
-    def __init__(self, render_mode=None):
+    def __init__(self, cid=None, render_mode=None, level=logging.DEBUG):
+
         self.utils = EBMUtils()
+        self.cid = cid
+
+        self.logger = setup_logger(f"EBM {self.cid}", level)
+
+        self.logger.debug(f"Environment ID: {self.cid}")
+        self.logger.debug(f"Number of clients: {NUM_CLIENTS}")
 
         self.min_D = 0.55
         self.max_D = 0.65
@@ -114,8 +107,8 @@ class EnergyBalanceModelEnv(gym.Env):
             low=np.array(
                 [
                     self.min_D,
-                    *[self.min_A for _ in range(EBM_LATITUDES)],
-                    *[self.min_B for _ in range(EBM_LATITUDES)],
+                    *[self.min_A for x in range(EBM_LATITUDES)],
+                    *[self.min_B for x in range(EBM_LATITUDES)],
                     self.min_a0,
                     self.min_a2,
                 ],
@@ -124,8 +117,8 @@ class EnergyBalanceModelEnv(gym.Env):
             high=np.array(
                 [
                     self.max_D,
-                    *[self.max_A for _ in range(EBM_LATITUDES)],
-                    *[self.max_B for _ in range(EBM_LATITUDES)],
+                    *[self.max_A for x in range(EBM_LATITUDES)],
+                    *[self.max_B for x in range(EBM_LATITUDES)],
                     self.max_a0,
                     self.max_a2,
                 ],
@@ -134,31 +127,34 @@ class EnergyBalanceModelEnv(gym.Env):
             shape=(2 * EBM_LATITUDES + 3,),
             dtype=np.float32,
         )
-
         self.observation_space = spaces.Box(
-            low=np.array(
-                [self.min_temperature for _ in range(EBM_LATITUDES)], dtype=np.float32
-            ).reshape(
-                -1,
-            ),
-            high=np.array(
-                [self.max_temperature for _ in range(EBM_LATITUDES)], dtype=np.float32
-            ).reshape(
-                -1,
-            ),
+            low=self.min_temperature,
+            high=self.max_temperature,
             shape=(EBM_LATITUDES,),
             dtype=np.float32,
         )
 
         assert render_mode is None or render_mode in self.metadata["render_modes"]
+
         self.render_mode = render_mode
+
+        self.REDIS_ADDRESS = os.getenv("SSDB")
+        if self.REDIS_ADDRESS is None:
+            raise EnvironmentError("SSDB environment variable is not set.")
+        self.redis = Client(address=self.REDIS_ADDRESS, cluster=False)
+        self.logger.debug(f"Connected to Redis server: {self.REDIS_ADDRESS}")
+
+        self.redis.put_tensor(f"SIGALIVE_S{self.cid}", np.array([1], dtype=np.int32))
 
     def _get_obs(self):
         return self._get_state()
 
     def _get_temp(self, model="RL"):
-        ebm = self.ebm if model == "RL" else self.climlab_ebm
-        temp = np.array(ebm.Ts, dtype=np.float32)
+        if model == "RL":
+            ebm = self.ebm
+        elif model == "climlab":
+            ebm = self.climlab_ebm
+        temp = np.array(ebm.Ts, dtype=np.float32).reshape(-1)
         return temp
 
     def _get_info(self):
@@ -167,16 +163,17 @@ class EnergyBalanceModelEnv(gym.Env):
     def _get_params(self):
         D = self.ebm.subprocess["diffusion"].D
         A, B = self.ebm.subprocess["LW"].A / 1e2, self.ebm.subprocess["LW"].B
-        a0, a2 = self.ebm.subprocess["albedo"].a0, self.ebm.subprocess["albedo"].a2
+        a0, a2 = (
+            self.ebm.subprocess["albedo"].a0,
+            self.ebm.subprocess["albedo"].a2,
+        )
         params = np.array(
             [D, *(A.reshape(-1)), *(B.reshape(-1)), a0, a2], dtype=np.float32
         )
         return params
 
     def _get_state(self):
-        state = self._get_temp().reshape(
-            -1,
-        )
+        state = self._get_temp()
         return state
 
     def step(self, action):
@@ -200,12 +197,12 @@ class EnergyBalanceModelEnv(gym.Env):
 
         self.ebm.step_forward()
         self.climlab_ebm.step_forward()
-        self.Ts_ncep_annual = self.utils.Ts_ncep_annual.interp(
-            lat=self.ebm.lat, kwargs={"fill_value": "extrapolate"}
-        )
 
         costs = np.mean(
-            (np.array(self.ebm.Ts).reshape(-1) - self.Ts_ncep_annual.values) ** 2
+            (np.array(self.ebm.Ts).reshape(-1) - self.Ts_ncep_annual.values)[
+                self.ebm_min_idx : self.ebm_max_idx
+            ]
+            ** 2
         )
 
         self.state = self._get_state()
@@ -213,7 +210,7 @@ class EnergyBalanceModelEnv(gym.Env):
         return self._get_obs(), -costs, False, False, self._get_info()
 
     def get_target_state(self):
-        return np.array(self.Ts_ncep_annual.values)
+        return np.array(self.Ts_ncep_annual.values[self.ebm_min_idx : self.ebm_max_idx])
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
@@ -221,10 +218,10 @@ class EnergyBalanceModelEnv(gym.Env):
             a0=self.utils.a0_ref,
             a2=self.utils.a2_ref,
             D=self.utils.D_ref,
-            A=np.array([self.utils.A_ref * 1e2 for _ in range(EBM_LATITUDES)]).reshape(
+            A=np.array([self.utils.A_ref * 1e2 for x in range(EBM_LATITUDES)]).reshape(
                 -1, 1
             ),
-            B=np.array([self.utils.B_ref for _ in range(EBM_LATITUDES)]).reshape(-1, 1),
+            B=np.array([self.utils.B_ref for x in range(EBM_LATITUDES)]).reshape(-1, 1),
             num_lat=EBM_LATITUDES,
             name="EBM Model w/ RL",
         )
@@ -236,6 +233,12 @@ class EnergyBalanceModelEnv(gym.Env):
         self.climlab_ebm = climlab.process_like(self.ebm)
         self.climlab_ebm.name = "EBM Model"
 
+        self.ebm_min_idx, self.ebm_max_idx = (
+            self.cid * EBM_SUBLATITUDES,
+            (self.cid + 1) * EBM_SUBLATITUDES,
+        )
+        self.phi = self.ebm.lat[self.ebm_min_idx : self.ebm_max_idx]
+
         self.state = self._get_state()
         return self._get_obs(), self._get_info()
 
@@ -246,13 +249,20 @@ class EnergyBalanceModelEnv(gym.Env):
         params = self._get_params()
 
         ax1 = fig.add_subplot(gs[0, 0])
+
         ax1_labels = ["D", "A", "B", "a0", "a2"]
-        ax1_colors = ["tab:blue"] * len(ax1_labels)
+        ax1_colors = [
+            "tab:blue",
+            "tab:blue",
+            "tab:blue",
+            "tab:blue",
+            "tab:blue",
+        ]
         ax1_bars = ax1.bar(
             ax1_labels,
             [
                 params[0],
-                np.mean(params[1 : EBM_LATITUDES + 1]),
+                np.mean(params[: EBM_LATITUDES + 1]),
                 np.mean(params[EBM_LATITUDES + 1 : -2]),
                 *params[-2:],
             ],
@@ -274,9 +284,22 @@ class EnergyBalanceModelEnv(gym.Env):
             )
 
         ax2 = fig.add_subplot(gs[0, 1])
-        ax2.plot(self.ebm.lat, self.ebm.Ts, label="EBM Model w/ RL")
-        ax2.plot(self.climlab_ebm.lat, self.climlab_ebm.Ts, label="EBM Model")
-        ax2.plot(self.climlab_ebm.lat, self.Ts_ncep_annual, label="Observations", c="k")
+        ax2.plot(
+            self.ebm.lat[self.ebm_min_idx : self.ebm_max_idx],
+            self.ebm.Ts[self.ebm_min_idx : self.ebm_max_idx],
+            label="EBM Model w/ RL",
+        )
+        ax2.plot(
+            self.climlab_ebm.lat[self.ebm_min_idx : self.ebm_max_idx],
+            self.climlab_ebm.Ts[self.ebm_min_idx : self.ebm_max_idx],
+            label="EBM Model",
+        )
+        ax2.plot(
+            self.climlab_ebm.lat,
+            self.Ts_ncep_annual,
+            label="Observations",
+            c="k",
+        )
         ax2.set_ylabel("Temperature (°C)")
         ax2.set_xlabel("Latitude")
         ax2.set_xlim(-90, 90)
@@ -286,13 +309,17 @@ class EnergyBalanceModelEnv(gym.Env):
 
         ax3 = fig.add_subplot(gs[0, 2])
         ax3.bar(
-            x=self.ebm.lat,
-            height=np.abs(self.ebm.Ts.reshape(-1) - self.Ts_ncep_annual.values),
+            x=self.ebm.lat[self.ebm_min_idx : self.ebm_max_idx],
+            height=np.abs(self.ebm.Ts.reshape(-1) - self.Ts_ncep_annual.values)[
+                self.ebm_min_idx : self.ebm_max_idx
+            ],
             label="EBM Model w/ RL",
         )
         ax3.bar(
-            x=self.climlab_ebm.lat,
-            height=np.abs(self.climlab_ebm.Ts.reshape(-1) - self.Ts_ncep_annual.values),
+            x=self.climlab_ebm.lat[self.ebm_min_idx : self.ebm_max_idx],
+            height=np.abs(self.climlab_ebm.Ts.reshape(-1) - self.Ts_ncep_annual.values)[
+                self.ebm_min_idx : self.ebm_max_idx
+            ],
             label="EBM Model",
             zorder=-1,
         )
@@ -319,9 +346,11 @@ class EnergyBalanceModelEnv(gym.Env):
             return image
 
 
-def run_ebm(seed):
+def run_ebm(seed, cid):
+
+    set_seed(seed)
     envs = gym.vector.SyncVectorEnv(
-        [make_env(EnergyBalanceModelEnv, seed, MAX_EPISODE_STEPS)]
+        [make_env(functools.partial(EnergyBalanceModelEnv, cid=cid), seed, NUM_STEPS)]
     )
     api = FedRAIN()
     agent = api.set_algorithm(
@@ -330,6 +359,11 @@ def run_ebm(seed):
         seed=seed,
         actor_layer_size=ACTOR_LAYER_SIZE,
         critic_layer_size=CRITIC_LAYER_SIZE,
+        fedRLConfig={
+            "cid": cid,
+            "num_steps": NUM_STEPS,
+            "flwr_episodes": FLWR_EPISODES,
+        },
     )
 
     obs, _ = envs.reset()
@@ -342,8 +376,8 @@ def run_ebm(seed):
 
 if __name__ == "__main__":
     seed = 1
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.backends.cudnn.deterministic = True
-    run_ebm(seed=1)
+
+    server = FLWRServer(NUM_CLIENTS, 2)
+    server.generate_actor(EnergyBalanceModelEnv, DDPGActor, ACTOR_LAYER_SIZE)
+    server.set_client(seed=seed, fn=run_ebm, num_steps=NUM_STEPS)
+    server.serve()

@@ -1,15 +1,12 @@
-import random
-
 import gymnasium as gym
 import numpy as np
 import pygame
-import torch
 from gymnasium import spaces
 
 from fedrain.api import FedRAIN
-from fedrain.utils import make_env
+from fedrain.utils import make_env, set_seed
 
-MAX_EPISODE_STEPS = 200
+NUM_STEPS = 200
 TOTAL_TIMESTEPS = 2000
 ACTOR_LAYER_SIZE, CRITIC_LAYER_SIZE = 64, 64
 
@@ -177,8 +174,9 @@ class SimpleClimateBiasCorrectionEnv(gym.Env):
 
 
 def run_scbc(seed):
+    set_seed(seed)
     envs = gym.vector.SyncVectorEnv(
-        [make_env(SimpleClimateBiasCorrectionEnv, seed, MAX_EPISODE_STEPS)]
+        [make_env(SimpleClimateBiasCorrectionEnv, seed, NUM_STEPS)]
     )
     api = FedRAIN()
     agent = api.set_algorithm(
@@ -199,8 +197,4 @@ def run_scbc(seed):
 
 if __name__ == "__main__":
     seed = 1
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.backends.cudnn.deterministic = True
-    run_scbc(seed=1)
+    run_scbc(seed)

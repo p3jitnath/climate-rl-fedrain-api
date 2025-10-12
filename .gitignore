@@ -211,3 +211,6 @@ sketch.txt
 
 # Datasets
 datasets/
+
+# Redis
+*.rdb

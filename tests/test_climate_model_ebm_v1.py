@@ -1,14 +1,12 @@
 import glob
 import logging
-import random
 
 import gymnasium as gym
 import numpy as np
-import torch
 
 from examples.climate_models.ebm_v1 import EnergyBalanceModelEnv
 from fedrain.api import FedRAIN
-from fedrain.utils import make_env
+from fedrain.utils import make_env, set_seed
 from tests.utils import retrieve_tfrecord_data
 
 EPISODES = 10
@@ -33,13 +31,9 @@ test_data = retrieve_tfrecord_data(
 )
 
 
-def test_ebm_episodic_return_matches_expected():
+def test_ebm_v1_episodic_return_matches_expected():
 
-    random.seed(SEED)
-    np.random.seed(SEED)
-    torch.manual_seed(SEED)
-    torch.backends.cudnn.deterministic = True
-
+    set_seed(SEED)
     envs = gym.vector.SyncVectorEnv([make_env(EnergyBalanceModelEnv, SEED, NUM_STEPS)])
 
     params = CONFIG.copy()
@@ -62,13 +56,13 @@ def test_ebm_episodic_return_matches_expected():
             for info in infos["final_info"]:
                 episode_return = info["episode"]["r"]
                 if episode_return is not None:
-                    episodic_returns.append(episode_return)
+                    episodic_returns.append(episode_return[0])
                 break
 
         obs = next_obs
 
     assert episodic_returns, "No episodic return was recorded during the run"
-    last_return = episodic_returns[-1][0]
+    last_return = episodic_returns[-1]
 
     expected = test_data[1][EPISODES - 1]["episodic_return"]
     assert np.isclose(

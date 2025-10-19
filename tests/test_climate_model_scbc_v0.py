@@ -1,14 +1,12 @@
 import glob
 import logging
-import random
 
 import gymnasium as gym
 import numpy as np
-import torch
 
 from examples.climate_models.scbc_v0 import SimpleClimateBiasCorrectionEnv
 from fedrain.api import FedRAIN
-from fedrain.utils import make_env
+from fedrain.utils import make_env, set_seed
 from tests.utils import retrieve_tfrecord_data
 
 EPISODES = 10
@@ -35,11 +33,7 @@ test_data = retrieve_tfrecord_data(
 
 def test_scbc_episodic_return_matches_expected():
 
-    random.seed(SEED)
-    np.random.seed(SEED)
-    torch.manual_seed(SEED)
-    torch.backends.cudnn.deterministic = True
-
+    set_seed(SEED)
     envs = gym.vector.SyncVectorEnv(
         [make_env(SimpleClimateBiasCorrectionEnv, SEED, NUM_STEPS)]
     )
@@ -62,7 +56,7 @@ def test_scbc_episodic_return_matches_expected():
 
         if "final_info" in infos:
             for info in infos["final_info"]:
-                episode_return = info["episode"]["r"]
+                episode_return = info["episode"]["r"][0]
                 if episode_return is not None:
                     episodic_returns.append(episode_return)
                 break
@@ -70,7 +64,7 @@ def test_scbc_episodic_return_matches_expected():
         obs = next_obs
 
     assert episodic_returns, "No episodic return was recorded during the run"
-    last_return = episodic_returns[-1][0]
+    last_return = episodic_returns[-1]
 
     expected = test_data[1][EPISODES - 1]["episodic_return"]
     assert np.isclose(

@@ -2,11 +2,12 @@ import tensorflow as tf  # For GLIBC issues: export LD_LIBRARY_PATH="${CONDA_PRE
 from tensorflow.core.util import event_pb2
 
 
-def retrieve_tfrecord_data(algo, tfrecord_path):
+def retrieve_tfrecord_data(algo, tfrecord_path, max_episodes=None):
     data = {}
     seed = int(tfrecord_path.split("/")[-2].split("__")[-2])
     data[seed] = []
     episodic_idx = 0
+    flag = False
     serialized_events = tf.data.TFRecordDataset(tfrecord_path)
     for serialized_example in serialized_events:
         e = event_pb2.Event.FromString(serialized_example.numpy())
@@ -16,4 +17,9 @@ def retrieve_tfrecord_data(algo, tfrecord_path):
                 data[seed].append(
                     {"episode": episodic_idx, "episodic_return": v.simple_value}
                 )
+                if max_episodes and episodic_idx == max_episodes:
+                    flag = True
+                    break
+        if max_episodes and flag:
+            break
     return data

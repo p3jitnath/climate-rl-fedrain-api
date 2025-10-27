@@ -1,11 +1,13 @@
 import functools
+import multiprocessing
 
 import flwr as fl
 import gymnasium as gym
+import ray
 from flwr.common import FitIns
 
 from fedrain.fedrl.client import generate_client_fn
-from fedrain.utils import instantiate_redis_server, make_env
+from fedrain.utils import RedisServer, make_env
 
 
 class FedAvg(fl.server.strategy.FedAvg):
@@ -40,8 +42,30 @@ class FedAvg(fl.server.strategy.FedAvg):
         return fit_configurations
 
 
-class FLWRServer:
+class Server:
+    def __init__(self):
+        self.process_fns, self._process_objs = [], []
+
+    def start_process(self, process_fn):
+        proc = multiprocessing.Process(target=process_fn)
+        proc.daemon = True
+        proc.start()
+        self._process_objs.append(proc)
+        return proc
+
+    def stop(self):
+        ray.shutdown()
+        for proc in self._process_objs:
+            proc.terminate()
+            proc.join()
+
+    def serve(self, *args, **kwargs):
+        raise NotImplementedError("Serve method not implemented.")
+
+
+class FLWRServer(Server):
     def __init__(self, num_clients, num_rounds, strategy=FedAvg):
+        super().__init__()
         self.num_clients = num_clients
         self.num_rounds = num_rounds
         self.strategy = strategy(
@@ -49,7 +73,8 @@ class FLWRServer:
             min_available_clients=num_clients,
             fraction_evaluate=0.0,
         )
-        instantiate_redis_server()
+        self.redis = RedisServer()
+        self.redis.start()
 
     def generate_actor(self, env_class, actor_class, layer_size):
         envs = gym.vector.SyncVectorEnv(
@@ -71,6 +96,7 @@ class FLWRServer:
         ray_init_args = {
             "num_cpus": total_cpus,
             "num_gpus": total_gpus,
+            "include_dashboard": False,
         }
 
         fl.simulation.start_simulation(
@@ -81,3 +107,7 @@ class FLWRServer:
             client_resources={"num_cpus": cpus_per_client, "num_gpus": gpus_per_client},
             config=fl.server.ServerConfig(num_rounds=self.num_rounds),
         )
+
+    def stop(self):
+        super().stop()
+        self.redis.stop()

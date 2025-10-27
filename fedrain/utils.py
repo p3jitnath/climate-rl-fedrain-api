@@ -42,51 +42,70 @@ def set_seed(seed):
     torch.backends.cudnn.deterministic = True
 
 
-def instantiate_redis_server(redis_port=6379):
-    redis_bin = shutil.which("redis-server")
-    if redis_bin is None:
-        raise RuntimeError(
-            "redis-server binary not found on PATH. Please install Redis."
+class RedisServer:
+    def __init__(self, redis_port=6379):
+        self.redis_port = redis_port
+        self.redis_proc = None
+
+    def _instantiate_redis_server(self, redis_port=6379):
+        redis_bin = shutil.which("redis-server")
+        if redis_bin is None:
+            raise RuntimeError(
+                "redis-server binary not found on PATH. Please install Redis."
+            )
+
+        rdb_path = os.path.abspath("./dump.rdb")
+        if os.path.exists(rdb_path):
+            try:
+                os.remove(rdb_path)
+            except OSError:
+                pass
+
+        cmd = [
+            redis_bin,
+            "--port",
+            str(redis_port),
+            "--loadmodule",
+            os.path.expanduser("~/redisai/redisai.so"),
+        ]
+
+        def set_deathsig():
+            import ctypes
+
+            libc = ctypes.CDLL("libc.so.6")
+            PR_SET_PDEATHSIG = 1
+            libc.prctl(PR_SET_PDEATHSIG, signal.SIGTERM)
+
+        redis_proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            preexec_fn=set_deathsig,
         )
 
-    rdb_path = os.path.abspath("./dump.rdb")
-    if os.path.exists(rdb_path):
-        try:
-            os.remove(rdb_path)
-        except OSError:
-            pass
+        for _ in range(50):
+            try:
+                with socket.create_connection(("127.0.0.1", redis_port), timeout=0.5):
+                    break
+            except OSError:
+                time.sleep(0.1)
+        else:
+            redis_proc.terminate()
+            raise RuntimeError("Failed to start redis-server on localhost")
 
-    cmd = [
-        redis_bin,
-        "--port",
-        str(redis_port),
-        "--loadmodule",
-        os.path.expanduser("~/redisai/redisai.so"),
-    ]
+        redis_address = f"127.0.0.1:{redis_port}"
+        os.environ["SSDB"] = redis_address
 
-    def set_deathsig():
-        import ctypes
+        return redis_proc
 
-        libc = ctypes.CDLL("libc.so.6")
-        PR_SET_PDEATHSIG = 1
-        libc.prctl(PR_SET_PDEATHSIG, signal.SIGTERM)
+    def _shutdown_redis_server(self, redis_proc):
+        if redis_proc is not None:
+            redis_proc.terminate()
+            redis_proc.wait()
 
-    redis_proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        preexec_fn=set_deathsig,
-    )
+    def start(self):
+        self.redis_proc = self._instantiate_redis_server(self.redis_port)
 
-    for _ in range(50):
-        try:
-            with socket.create_connection(("127.0.0.1", redis_port), timeout=0.5):
-                break
-        except OSError:
-            time.sleep(0.1)
-    else:
-        redis_proc.terminate()
-        raise RuntimeError("Failed to start redis-server on localhost")
-
-    redis_address = f"127.0.0.1:{redis_port}"
-    os.environ["SSDB"] = redis_address
+    def stop(self):
+        self._shutdown_redis_server(self.redis_proc)
+        self.redis_proc = None

@@ -42,7 +42,7 @@ ACTOR_LAYER_SIZE = CONFIG["actor_critic_layer_size"]
 
 test_data = [
     retrieve_tfrecord_data("ddpg", x, EPISODES)
-    for x in sorted(glob.glob(f"tests/runs/{EXP_ID}_*/*_ddpg_*/*tfevents*"))
+    for x in sorted(glob.glob(f"tests/data/runs/{EXP_ID}_*/*_ddpg_*/*tfevents*"))
 ]
 
 
@@ -93,12 +93,13 @@ def run_ebm(seed, cid):
                 )
 
 
-def test_ebm_episodic_return_matches_expected():
+def test_ebm_v2_episodic_return_matches_expected():
 
     server = FLWRServer(NUM_CLIENTS, 3)
     server.generate_actor(EnergyBalanceModelEnv, DDPGActor, ACTOR_LAYER_SIZE)
     server.set_client(seed=SEED, fn=run_ebm, num_steps=NUM_STEPS)
     server.serve()
+    server.stop()
 
     for cid in range(NUM_CLIENTS):
         pattern = os.path.join(

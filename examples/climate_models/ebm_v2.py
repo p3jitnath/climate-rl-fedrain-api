@@ -18,11 +18,12 @@ from fedrain.utils import make_env, set_seed, setup_logger
 
 EBM_LATITUDES = 96
 NUM_CLIENTS = 2
-FLWR_ROUNDS = 5
+
 EBM_SUBLATITUDES = EBM_LATITUDES // NUM_CLIENTS
 
 NUM_STEPS = 200
 FLWR_EPISODES = 5
+FLWR_ROUNDS = 5
 TOTAL_TIMESTEPS = FLWR_EPISODES * FLWR_ROUNDS * NUM_STEPS
 ACTOR_LAYER_SIZE, CRITIC_LAYER_SIZE = 64, 64
 
@@ -382,3 +383,4 @@ if __name__ == "__main__":
     server.generate_actor(EnergyBalanceModelEnv, DDPGActor, ACTOR_LAYER_SIZE)
     server.set_client(seed=seed, fn=run_ebm, num_steps=NUM_STEPS)
     server.serve()
+    server.stop()

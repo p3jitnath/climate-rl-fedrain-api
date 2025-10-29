@@ -1,3 +1,20 @@
+"""Example: Energy Balance Model (EBM) environment (version 1).
+
+This module provides a small OpenAI Gym-compatible environment that wraps
+an annual energy-balance model (using ``climlab``) and exposes a
+reinforcement-learning-friendly API used by the example scripts and tests.
+
+Contents
+--------
+- ``EBMUtils``: dataset helpers and climatology loading.
+- ``EnergyBalanceModelEnv``: the Gym environment exposing state, actions and
+    a step/update loop compatible with DDPG agents.
+- ``run_ebm``: convenience runner used for quick experiments.
+
+The environment is intentionally lightweight and deterministic (when
+seeded) so it is suitable for tests and small demos.
+"""
+
 import logging
 import os
 
@@ -20,6 +37,12 @@ ACTOR_LAYER_SIZE, CRITIC_LAYER_SIZE = 64, 64
 
 
 class EBMUtils:
+    """Utility helpers for dataset loading and climatologies.
+
+    This small container provides file paths, dataset download helpers and
+    cached climatological arrays used by the example EBM environments.
+    """
+
     BASE_DIR = "."
     DATASETS_DIR = f"{BASE_DIR}/datasets"
 
@@ -33,6 +56,23 @@ class EBMUtils:
     )
 
     def download_and_save_dataset(url, filepath, dataset_name):
+        """Download (or load) and return a named dataset.
+
+        Parameters
+        ----------
+        url : str
+            Remote URL of the dataset.
+        filepath : str
+            Local path to cache the dataset.
+        dataset_name : str
+            Human-readable dataset name used for logging.
+
+        Returns
+        -------
+        xarray.Dataset
+            The loaded dataset object.
+
+        """
         logger = setup_logger("DATASET", logging.DEBUG)
         if not os.path.exists(filepath):
             logger.debug(f"Downloading {dataset_name} data ...")
@@ -83,12 +123,37 @@ class EBMUtils:
 
 
 class EnergyBalanceModelEnv(gym.Env):
+    """Gym environment wrapping a energy-balance climate model.
+
+    The agent controls a small set of radiative and diffusion parameters
+    (D, A, B, a0, a2) that affect the model's temperature field. The
+    observation is the vector of latitudinal surface temperatures and the
+    reward is the negative mean-squared error relative to a reference
+    climatology.
+
+    Notes
+    -----
+    The environment uses ``climlab`` to create a physical EBM and exposes a
+    straightforward step API compatible with vectorized Gym environments used
+    in tests and examples.
+
+    """
+
     metadata = {
         "render_modes": ["human", "rgb_array"],
         "render_fps": 30,
     }
 
     def __init__(self, render_mode=None):
+        """Create the EBM environment and initialise action/observation spaces.
+
+        Parameters
+        ----------
+        render_mode : str or None
+            If provided, controls rendering mode (``'human'`` or
+            ``'rgb_array'``). If ``None``, rendering is disabled.
+
+        """
         self.utils = EBMUtils()
 
         self.min_D = 0.55
@@ -153,17 +218,55 @@ class EnergyBalanceModelEnv(gym.Env):
         self.render_mode = render_mode
 
     def _get_obs(self):
+        """Return the current observation for the environment.
+
+        Returns
+        -------
+        numpy.ndarray
+            1-D float32 array containing the current temperature field for
+            all latitudes (shape ``(EBM_LATITUDES,)``).
+
+        """
         return self._get_state()
 
     def _get_temp(self, model="RL"):
+        """Return the temperature field from the selected model process.
+
+        Parameters
+        ----------
+        model : {'RL', 'climlab'}, optional
+            Select which internal process to query: ``'RL'`` returns the
+            reinforcement-learning controlled EBM, ``'climlab'`` returns
+            the baseline ClimLab process. Default is ``'RL'``.
+
+        Returns
+        -------
+        numpy.ndarray
+            1-D float32 array of temperatures for all latitudes.
+
+        """
         ebm = self.ebm if model == "RL" else self.climlab_ebm
         temp = np.array(ebm.Ts, dtype=np.float32)
         return temp
 
     def _get_info(self):
+        """Return an info dictionary for the current timestep.
+
+        The environment currently does not populate diagnostics; this
+        placeholder satisfies the Gym API.
+        """
         return {"_": None}
 
     def _get_params(self):
+        """Return the flattened model parameter vector used by the agent.
+
+        Returns
+        -------
+        numpy.ndarray
+            1-D float32 array containing [D, A..., B..., a0, a2]. Values are
+            extracted from the underlying climlab subprocess structures.
+
+        """
         D = self.ebm.subprocess["diffusion"].D
         A, B = self.ebm.subprocess["LW"].A / 1e2, self.ebm.subprocess["LW"].B
         a0, a2 = self.ebm.subprocess["albedo"].a0, self.ebm.subprocess["albedo"].a2
@@ -173,12 +276,36 @@ class EnergyBalanceModelEnv(gym.Env):
         return params
 
     def _get_state(self):
+        """Return the environment state vector used as an observation.
+
+        Returns
+        -------
+        numpy.ndarray
+            1-D float32 array representing the flattened temperature field.
+
+        """
         state = self._get_temp().reshape(
             -1,
         )
         return state
 
     def step(self, action):
+        """Apply an action and advance the model one timestep.
+
+        Parameters
+        ----------
+        action : array-like
+            Array containing parameter values for D, A (per-lat), B (per-lat),
+            a0 and a2. Values will be clipped to the environment parameter
+            bounds.
+
+        Returns
+        -------
+        obs, reward, done, trunc, info
+            Standard Gym step tuple. ``done`` is always False in this episodic
+            setup and ``trunc`` is False. ``info`` contains diagnostics.
+
+        """
         split_idx = EBM_LATITUDES
         D = action[0]
         A = np.array(action[1 : split_idx + 1]).reshape(-1, 1)
@@ -212,9 +339,40 @@ class EnergyBalanceModelEnv(gym.Env):
         return self._get_obs(), -costs, False, False, self._get_info()
 
     def get_target_state(self):
+        """Return the target climatological temperature state.
+
+        Returns
+        -------
+        numpy.ndarray
+            Array of target temperatures used to compute the reward.
+
+        """
         return np.array(self.Ts_ncep_annual.values)
 
     def reset(self, seed=None, options=None):
+        """Reset the environment and initialize internal EBM state.
+
+        This method resets the Gym environment's random seed (via
+        :meth:`gym.Env.reset`), constructs the climlab EBM instance and a
+        matching ClimLab process, interpolates the reference climatology to
+        the model latitudes, and sets the initial observation stored in
+        ``self.state``.
+
+        Parameters
+        ----------
+        seed : int or None
+            Optional random seed forwarded to ``super().reset`` for
+            reproducibility. If ``None``, Gym's default behavior applies.
+        options : dict or None
+            Gymnasium reset options (currently unused by this environment).
+
+        Returns
+        -------
+        observation, info
+            The initial observation (1-D ``float32`` array) and an info
+            dictionary following the Gym API.
+
+        """
         super().reset(seed=seed)
         self.ebm = climlab.EBM_annual(
             a0=self.utils.a0_ref,
@@ -239,6 +397,21 @@ class EnergyBalanceModelEnv(gym.Env):
         return self._get_obs(), self._get_info()
 
     def _render_frame(self, save_fig=None, idx=None):
+        """Create a matplotlib figure visualising parameters, state and error.
+
+        Parameters
+        ----------
+        save_fig : str or None
+            Optional path to save the generated figure.
+        idx : int or None
+            Optional frame index used when saving or annotating figures.
+
+        Returns
+        -------
+        matplotlib.figure.Figure
+            The constructed figure object.
+
+        """
         fig = plt.figure(figsize=(28, 8))
         gs = GridSpec(1, 3, figure=fig)
 
@@ -305,6 +478,12 @@ class EnergyBalanceModelEnv(gym.Env):
         return fig
 
     def render(self, **kwargs):
+        """Render the environment according to the configured mode.
+
+        Supports ``'human'`` (display the figure) and ``'rgb_array'`` (return
+        an RGB numpy array) modes as declared in :pyattr:`metadata`.
+
+        """
         if self.render_mode == "human":
             self._render_frame(**kwargs)
             plt.show()
@@ -319,6 +498,18 @@ class EnergyBalanceModelEnv(gym.Env):
 
 
 def run_ebm(seed):
+    """Run a short training loop using the environment and a DDPG agent.
+
+    This convenience runner is intended for manual experimentation and
+    demonstration. It seeds RNGs, constructs a vectorized environment and
+    runs the DDPG agent for ``TOTAL_TIMESTEPS`` steps.
+
+    Parameters
+    ----------
+    seed : int
+        Random seed used for reproducibility.
+
+    """
     set_seed(seed)
     envs = gym.vector.SyncVectorEnv([make_env(EnergyBalanceModelEnv, seed, NUM_STEPS)])
     api = FedRAIN()

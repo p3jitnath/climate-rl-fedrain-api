@@ -1,3 +1,14 @@
+"""Integration tests for the EBM v2 multi-client experiment.
+
+These tests reproduce a short federated simulation using the EBM v2
+environment and verify that the episodic returns recorded during the
+simulation match precomputed expected values stored in TFRecord test data.
+
+The module provides a small helper ``run_ebm`` used to run the environment
+loop in a spawned process and a single test that starts a Flower-based
+simulation with multiple clients.
+"""
+
 import functools
 import glob
 import json
@@ -47,7 +58,21 @@ test_data = [
 
 
 def run_ebm(seed, cid):
+    """Run a short EBM training loop in a separate process.
 
+    This function is intended to be started as a background process by the
+    Flower client helper. It performs environment interaction for a fixed
+    number of timesteps and writes a small JSON file with the episodic
+    return for later verification.
+
+    Parameters
+    ----------
+    seed : int
+        Random seed to use for env and algorithm seeding.
+    cid : int
+        Client identifier used when writing the result file.
+
+    """
     result_path = os.path.join(
         tempfile.gettempdir(), f"ebm_test_result_cid{cid}_{os.getpid()}.json"
     )
@@ -94,7 +119,12 @@ def run_ebm(seed, cid):
 
 
 def test_ebm_v2_episodic_return_matches_expected():
+    """Run a short federated EBM v2 simulation and compare episodic return.
 
+    This test starts a small Flower-based federated simulation and asserts
+    that the recorded episodic return matches the precomputed expected
+    value from the TFRecord test data.
+    """
     server = FLWRServer(NUM_CLIENTS, 3)
     server.generate_actor(EnergyBalanceModelEnv, DDPGActor, ACTOR_LAYER_SIZE)
     server.set_client(seed=SEED, fn=run_ebm, num_steps=NUM_STEPS)

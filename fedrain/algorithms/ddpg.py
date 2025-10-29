@@ -1,3 +1,9 @@
+"""DDPG algorithm implementation used by FedRAIN.
+
+This module implements a compact DDPG agent (actor, critic, replay
+buffer and training loop) intended for experiments and integration tests.
+"""
+
 import logging
 
 import numpy as np
@@ -13,13 +19,41 @@ from fedrain.utils import setup_logger
 
 
 class DDPGActor(nn.Module):
+    """Actor network for DDPG.
+
+    The actor maps observations to continuous actions in the environment's
+    action space. The final layer uses a tanh activation then scales and
+    biases the output to match the environment action range.
+
+    Parameters
+    ----------
+    envs : gym.Env or vectorized env
+        Environment or vectorized environments providing ``single_observation_space``
+        and ``single_action_space`` used to determine input/output sizes and
+        action scaling.
+    layer_size : int
+        Width of the hidden layers.
+
+    """
+
     def __init__(self, envs, layer_size):
+        """Initialize the actor network layers and scaling buffers.
+
+        Parameters
+        ----------
+        envs : gym.Env or vectorized env
+            Environment used to infer input/output shapes.
+        layer_size : int
+            Width of the hidden layers.
+
+        """
         super().__init__()
         self.fc1 = nn.Linear(
             np.array(envs.single_observation_space.shape).prod(), layer_size
         )
         self.fc2 = nn.Linear(layer_size, layer_size)
         self.fc_mu = nn.Linear(layer_size, np.prod(envs.single_action_space.shape))
+        # Scale and bias to map tanh outputs into environment action range
         self.register_buffer(
             "action_scale",
             torch.tensor(
@@ -36,6 +70,19 @@ class DDPGActor(nn.Module):
         )
 
     def forward(self, x):
+        """Compute action(s) from observation(s).
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Batch of observations with shape (batch_size, observation_dim).
+
+        Returns
+        -------
+        torch.Tensor
+            Batch of actions scaled to the environment action bounds.
+
+        """
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         x = torch.tanh(self.fc_mu(x))
@@ -43,7 +90,30 @@ class DDPGActor(nn.Module):
 
 
 class DDPGCritic(nn.Module):
+    """Critic (Q-function) network for DDPG.
+
+    The critic takes observations and actions and predicts a scalar Q-value.
+
+    Parameters
+    ----------
+    envs : gym.Env or vectorized env
+        Environment object used to infer input dimensions.
+    layer_size : int
+        Width of the hidden layers.
+
+    """
+
     def __init__(self, envs, layer_size):
+        """Initialize the critic network layers.
+
+        Parameters
+        ----------
+        envs : gym.Env or vectorized env
+            Environment used to infer input/output shapes.
+        layer_size : int
+            Width of the hidden layers.
+
+        """
         super().__init__()
         self.fc1 = nn.Linear(
             np.array(envs.single_observation_space.shape).prod()
@@ -54,6 +124,21 @@ class DDPGCritic(nn.Module):
         self.fc3 = nn.Linear(layer_size, 1)
 
     def forward(self, x, a):
+        """Compute Q-value for given observations and actions.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Batch of observations with shape (batch_size, observation_dim).
+        a : torch.Tensor
+            Batch of actions with shape (batch_size, action_dim).
+
+        Returns
+        -------
+        torch.Tensor
+            Predicted Q-values with shape (batch_size, 1).
+
+        """
         x = torch.cat([x, a], 1)
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
@@ -62,6 +147,55 @@ class DDPGCritic(nn.Module):
 
 
 class DDPG(BaseAlgorithm):
+    """Deep Deterministic Policy Gradient (DDPG) algorithm wrapper.
+
+    This class provides a minimal DDPG implementation used in FedRAIN for
+    continuous-action environments. It composes an actor and critic network,
+    a replay buffer, and exposes ``predict`` and ``update`` methods that
+    are used by the training loop.
+
+    Parameters
+    ----------
+    envs : gym.Env or vectorized env
+        Environment (or vectorized environments) providing observation and
+        action spaces used to build networks and the replay buffer.
+    seed : int
+        Random seed used for environment reset and reproducibility.
+    learning_rate : float, optional
+        Learning rate for both actor and critic optimizers (default 3e-4).
+    buffer_size : int, optional
+        Maximum size of the replay buffer (default 1e6).
+    gamma : float, optional
+        Discount factor for returns (default 0.99).
+    tau : float, optional
+        Soft-update coefficient for target networks (default 0.005).
+    batch_size : int, optional
+        Mini-batch size sampled from the replay buffer (default 256).
+    exploration_noise : float, optional
+        Scale of Gaussian exploration noise applied to actor outputs
+        (default 0.1).
+    learning_starts : int, optional
+        Number of environment steps to collect before learning starts
+        (default 1000).
+    policy_frequency : int, optional
+        How often (in gradient steps) the actor/target networks are updated
+        relative to the critic (default 2).
+    noise_clip : float, optional
+        Clipping value for exploration noise (default 0.5).
+    actor_layer_size : int, optional
+        Hidden layer width for the actor network (default 256).
+    critic_layer_size : int, optional
+        Hidden layer width for the critic network (default 256).
+    device : str, optional
+        Torch device name (e.g. 'cpu' or 'cuda') to place tensors/models.
+    level : int, optional
+        Logging level forwarded to the internal logger (default logging.DEBUG).
+    fedRLConfig : dict or None, optional
+        If provided, configuration dict used to enable federated weight
+        exchange via FedRL.
+
+    """
+
     def __init__(
         self,
         envs,
@@ -81,6 +215,15 @@ class DDPG(BaseAlgorithm):
         level=logging.DEBUG,
         fedRLConfig=None,
     ):
+        """Initialize the DDPG agent and its components.
+
+        Notes
+        -----
+        The constructor creates actor/critic networks, their target copies,
+        optimizers, and a replay buffer. If ``fedRLConfig`` is provided, a
+        ``FedRL`` helper is instantiated and initial weights are exchanged.
+
+        """
         super().__init__()
 
         self.envs = envs
@@ -132,6 +275,13 @@ class DDPG(BaseAlgorithm):
         self.global_step = 1
 
     def predict(self, obs):
+        """Compute actions for given observations.
+
+        When the agent has not yet collected enough experience (global
+        step < learning_starts) actions are sampled from the environment's
+        action space. Otherwise the actor network is used with added
+        exploration noise.
+        """
         if self.global_step < self.learning_starts:
             actions = np.array(
                 [
@@ -156,7 +306,24 @@ class DDPG(BaseAlgorithm):
         return actions
 
     def update(self, actions, next_obs, rewards, terminations, truncations, infos):
+        """Perform a training update using data from the replay buffer.
 
+        Parameters
+        ----------
+        actions : array-like
+            Actions taken by the agent.
+        next_obs : array-like
+            Next observations observed after taking ``actions``.
+        rewards : array-like
+            Rewards received.
+        terminations : array-like
+            Termination flags for episodes.
+        truncations : array-like
+            Truncation flags for episodes.
+        infos : dict
+            Additional environment-provided info structures.
+
+        """
         if "final_info" in infos:
             for info in infos["final_info"]:
                 if self.fedRLConfig:

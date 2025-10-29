@@ -1,3 +1,10 @@
+"""Flower client adapter and helpers for FedRL experiments.
+
+This module provides a Flower ``NumPyClient`` bridge that uses SmartRedis
+to transfer flattened actor weights between the server and a local RL
+process. It also includes a small factory helper used by the server.
+"""
+
 import logging
 import multiprocessing as mp
 import os
@@ -10,7 +17,45 @@ from fedrain.utils import setup_logger
 
 
 class FlowerClient(fl.client.NumPyClient):
+    """Flower client adapter that bridges FL clients to local actor processes.
+
+    This client implementation conforms to Flower's ``NumPyClient`` API and
+    uses SmartRedis to transfer flattened actor weights between the server
+    and a background RL process. The client optionally spawns a background
+    process when a shared signal key is not present in Redis.
+
+    Parameters
+    ----------
+    seed : int
+        Random seed used by the spawned environment/process.
+    cid : int
+        Client identifier used to form unique Redis tensor keys.
+    fn : callable
+        Function used to create/start the client-side training process.
+    actor : torch.nn.Module
+        Local actor instance used to read/write parameter arrays.
+    num_steps : int
+        Number of local steps to run during ``fit`` (returned to server).
+
+    """
+
     def __init__(self, seed, cid, fn, actor, num_steps):
+        """Create a Flower client adapter and (optionally) start a worker.
+
+        Parameters
+        ----------
+        seed : int
+            Random seed used by the spawned environment/process.
+        cid : int
+            Client identifier used to form unique Redis tensor keys.
+        fn : callable
+            Function used to create/start the client-side training process.
+        actor : torch.nn.Module
+            Local actor instance used to read/write parameter arrays.
+        num_steps : int
+            Number of local steps to run during ``fit`` (reported to server).
+
+        """
         super().__init__()
 
         self.cid = cid
@@ -40,6 +85,14 @@ class FlowerClient(fl.client.NumPyClient):
                 raise
 
     def set_parameters(self, parameters):
+        """Publish flattened parameter arrays to the remote store.
+
+        Parameters
+        ----------
+        parameters : Sequence[numpy.ndarray]
+            List of layer parameter arrays as provided by Flower's server.
+
+        """
         if self.actor:
             actor_weights = np.concatenate([param.flatten() for param in parameters])
 
@@ -48,6 +101,25 @@ class FlowerClient(fl.client.NumPyClient):
             )
 
     def get_parameters(self, config):
+        """Retrieve flattened parameters published by the local actor process.
+
+        This method blocks until the corresponding tensor is present in the
+        remote store, then reconstructs the per-layer arrays matching the
+        shapes of ``self.actor.parameters()``.
+
+        Parameters
+        ----------
+        config : dict
+            Configuration dict supplied by Flower (unused here but kept to
+            satisfy the NumPyClient API).
+
+        Returns
+        -------
+        list
+            A list of numpy arrays matching the shapes of the actor's
+            parameters (ready to be consumed by Flower's aggregation).
+
+        """
         if self.actor:
             while not self.redis.tensor_exists(
                 f"actor_network_weights_c2g_s{self.cid}"
@@ -72,6 +144,26 @@ class FlowerClient(fl.client.NumPyClient):
         return parameters
 
     def fit(self, parameters, config):
+        """Handle a ``fit`` round from the Flower server.
+
+        The client sets incoming parameters on the local process, waits for the
+        process to produce updated parameters, and returns them along with the
+        number of local steps performed.
+
+        Parameters
+        ----------
+        parameters : Sequence[numpy.ndarray]
+            Parameters received from the server.
+        config : dict
+            Configuration metadata from the Flower server.
+
+        Returns
+        -------
+        tuple
+            Tuple of ``(updated_parameters, num_steps, metrics)`` matching the
+            Flower client API.
+
+        """
         # self.logger.debug(f"{config['server_round']} - Setting parameters")
         self.set_parameters(parameters)
 
@@ -82,6 +174,31 @@ class FlowerClient(fl.client.NumPyClient):
 
 
 def generate_client_fn(seed, fn, actor, num_steps):
+    """Return a Flower-compatible client factory function.
+
+    The returned function expects a Flower client context and produces a
+    connected ``FlowerClient`` instance configured for the partition-id in
+    the context.
+
+    Parameters
+    ----------
+    seed : int
+        Seed to pass to each client process.
+    fn : callable
+        Function used to start the client-side process.
+    actor : torch.nn.Module
+        Actor instance to share with clients.
+    num_steps : int
+        Number of local steps to report for each ``fit`` call.
+
+    Returns
+    -------
+    callable
+        A function accepting a Flower ``context`` and returning a
+        ``FlowerClient`` bound to that context.
+
+    """
+
     def client_fn(context):
         return FlowerClient(
             seed, int(context.node_config["partition-id"]), fn, actor, num_steps

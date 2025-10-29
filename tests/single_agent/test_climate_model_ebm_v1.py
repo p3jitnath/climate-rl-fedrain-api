@@ -1,3 +1,10 @@
+"""Single-agent integration test for EBM v1 climate model.
+
+This test runs a deterministic DDPG rollout on the EBM v1 environment and
+compares the final episodic return to a precomputed expected value stored
+in TFRecord test artifacts.
+"""
+
 import glob
 import logging
 
@@ -32,7 +39,13 @@ test_data = retrieve_tfrecord_data(
 
 
 def test_ebm_v1_episodic_return_matches_expected():
+    """Run the EBM v1 loop and assert the last episodic return equals expected.
 
+    The test sets RNG seeds to ensure determinism and runs the DDPG
+    agent-environment interaction for a fixed number of timesteps. It then
+    compares the recorded final episodic return with the expected value from
+    the TFRecord data.
+    """
     set_seed(SEED)
     envs = gym.vector.SyncVectorEnv([make_env(EnergyBalanceModelEnv, SEED, NUM_STEPS)])
 

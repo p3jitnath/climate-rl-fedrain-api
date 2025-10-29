@@ -1,3 +1,10 @@
+"""Single-agent integration test for the SCBC v0 climate model.
+
+This test runs a small, deterministic agent-environment loop using the
+``SimpleClimateBiasCorrectionEnv`` and compares the final episodic
+return against a precomputed value stored in TFRecord test artifacts.
+"""
+
 import glob
 import logging
 
@@ -32,7 +39,14 @@ test_data = retrieve_tfrecord_data(
 
 
 def test_scbc_episodic_return_matches_expected():
+    """Run the environment loop and assert the final episodic return.
 
+    The test seeds RNGs to ensure determinism, constructs a vectorized
+    environment thunk, instantiates a DDPG agent via the public API, and
+    runs the action-update loop for a fixed number of timesteps. The last
+    recorded episodic return is compared against the expected value from
+    the TFRecord data.
+    """
     set_seed(SEED)
     envs = gym.vector.SyncVectorEnv(
         [make_env(SimpleClimateBiasCorrectionEnv, SEED, NUM_STEPS)]

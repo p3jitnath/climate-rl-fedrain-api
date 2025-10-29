@@ -1,3 +1,19 @@
+"""Multi-client EBM example (version 2).
+
+This module demonstrates a federated setup where different partitions of
+the latitude band are controlled by separate clients. It provides an
+``EnergyBalanceModelEnv`` class that accepts a ``cid`` argument to select
+the sub-latitude region the client controls. The module also contains a
+``run_ebm`` helper that is suitable for running in a background process
+paired with the federated Flower server used in tests and examples.
+
+Input observations are the entire global temperature field.
+Rewards are computed based on the mean squared error between the
+model's temperature field and observed climatological values ONLY over
+the specified sub-latitude region.
+
+"""
+
 import functools
 import logging
 import os
@@ -29,6 +45,11 @@ ACTOR_LAYER_SIZE, CRITIC_LAYER_SIZE = 64, 64
 
 
 class EBMUtils:
+    """Utility helpers and cached climatologies used by the EBM examples.
+
+    This container exposes file paths, a dataset download helper and
+    precomputed climatological arrays used by the environment instances.
+    """
 
     BASE_DIR = "/gws/nopw/j04/ai4er/users/pn341/climate-rl-fedrl"
     DATASETS_DIR = f"{BASE_DIR}/datasets"
@@ -39,6 +60,23 @@ class EBMUtils:
     )
 
     def download_and_save_dataset(url, filepath, dataset_name):
+        """Download (or load) and return a named dataset.
+
+        Parameters
+        ----------
+        url : str
+            Remote URL of the dataset.
+        filepath : str
+            Local path to cache the dataset.
+        dataset_name : str
+            Human-readable dataset name used for logging.
+
+        Returns
+        -------
+        xarray.Dataset
+            The loaded dataset object.
+
+        """
         logger = setup_logger("DATASET", logging.DEBUG)
         if not os.path.exists(filepath):
             logger.debug(f"Downloading {dataset_name} data ...")
@@ -71,6 +109,14 @@ class EBMUtils:
 
 
 class EnergyBalanceModelEnv(gym.Env):
+    """Gym environment exposing a sub-latitude partition of the EBM.
+
+    Each environment instance controls a contiguous sub-latitude band
+    selected by ``cid`` and communicates with a central EBM server via
+    SmartRedis tensors. Observations are the temperature field (global in
+    v2) and rewards are computed as the negative MSE against a
+    climatological reference over the local band.
+    """
 
     metadata = {
         "render_modes": ["human", "rgb_array"],
@@ -78,7 +124,20 @@ class EnergyBalanceModelEnv(gym.Env):
     }
 
     def __init__(self, cid=None, render_mode=None, level=logging.DEBUG):
+        """Create a federated EBM environment for the given client id.
 
+        Parameters
+        ----------
+        cid : int or None
+            Client identifier selecting the sub-latitude region this
+            environment controls.
+        render_mode : str or None
+            If provided, controls rendering mode (``'human'`` or
+            ``'rgb_array'``).
+        level : int
+            Logging level (passed to the internal logger).
+
+        """
         self.utils = EBMUtils()
         self.cid = cid
 
@@ -149,9 +208,33 @@ class EnergyBalanceModelEnv(gym.Env):
         self.redis.put_tensor(f"SIGALIVE_S{self.cid}", np.array([1], dtype=np.int32))
 
     def _get_obs(self):
+        """Return the current observation for the environment.
+
+        Returns
+        -------
+        numpy.ndarray
+            1-D float32 array containing the current temperature field for
+            all latitudes (shape ``(EBM_LATITUDES,)``).
+
+        """
         return self._get_state()
 
     def _get_temp(self, model="RL"):
+        """Return the temperature field from the chosen model process.
+
+        Parameters
+        ----------
+        model : {'RL', 'climlab'}, optional
+            Select which internal process to query: ``'RL'`` returns the
+            reinforcement-learning controlled EBM, ``'climlab'`` returns
+            the baseline ClimLab process. Default is ``'RL'``.
+
+        Returns
+        -------
+        numpy.ndarray
+            1-D float32 array of temperatures for all latitudes.
+
+        """
         if model == "RL":
             ebm = self.ebm
         elif model == "climlab":
@@ -160,9 +243,23 @@ class EnergyBalanceModelEnv(gym.Env):
         return temp
 
     def _get_info(self):
+        """Return an info dictionary for the current timestep.
+
+        The environment currently returns a placeholder dict to satisfy the
+        Gym API.
+        """
         return {"_": None}
 
     def _get_params(self):
+        """Return the flattened model parameter vector used by the agent.
+
+        Returns
+        -------
+        numpy.ndarray
+            1-D float32 array containing [D, A..., B..., a0, a2]. Values are
+            extracted from the underlying climlab subprocess structures.
+
+        """
         D = self.ebm.subprocess["diffusion"].D
         A, B = self.ebm.subprocess["LW"].A / 1e2, self.ebm.subprocess["LW"].B
         a0, a2 = (
@@ -175,10 +272,32 @@ class EnergyBalanceModelEnv(gym.Env):
         return params
 
     def _get_state(self):
+        """Return the environment state vector used as an observation.
+
+        Returns
+        -------
+        numpy.ndarray
+            1-D float32 array representing the flattened temperature field.
+
+        """
         state = self._get_temp()
         return state
 
     def step(self, action):
+        """Apply an action, step forward the EBM and return result.
+
+        Parameters
+        ----------
+        action : array-like
+            Action vector matching :pyattr:`action_space` (D, A..., B..., a0, a2).
+
+        Returns
+        -------
+        obs, reward, terminated, truncated, info
+            Observation, scalar reward (negative MSE), and Gym termination
+            flags plus an info dictionary.
+
+        """
         split_idx = EBM_LATITUDES
         D = action[0]
         A = np.array(action[1 : split_idx + 1]).reshape(-1, 1)
@@ -208,13 +327,44 @@ class EnergyBalanceModelEnv(gym.Env):
         )
 
         self.state = self._get_state()
-
         return self._get_obs(), -costs, False, False, self._get_info()
 
     def get_target_state(self):
+        """Return the observational target state for the local band.
+
+        Returns
+        -------
+        numpy.ndarray
+            Target climatological temperatures for the environment's
+            latitude band.
+
+        """
         return np.array(self.Ts_ncep_annual.values[self.ebm_min_idx : self.ebm_max_idx])
 
     def reset(self, seed=None, options=None):
+        """Reset the environment and initialize internal EBM state.
+
+        Parameters
+        ----------
+        seed : int or None
+            Optional random seed forwarded to ``super().reset`` for
+            reproducibility. If ``None``, no explicit reseeding is
+            performed here (Gym's default behavior applies).
+        options : dict or None
+            Gymnasium reset options (currently unused by this environment,
+            present for API compatibility).
+
+        Returns
+        -------
+        observation : numpy.ndarray
+            The initial observation for the environment (temperature field
+            over all latitudes) as a 1-D ``float32`` array with length
+            ``EBM_LATITUDES``.
+        info : dict
+            An info dictionary following the Gym API (currently contains
+            internal metadata via ``self._get_info()``).
+
+        """
         super().reset(seed=seed)
         self.ebm = climlab.EBM_annual(
             a0=self.utils.a0_ref,
@@ -245,6 +395,21 @@ class EnergyBalanceModelEnv(gym.Env):
         return self._get_obs(), self._get_info()
 
     def _render_frame(self, save_fig=None, idx=None):
+        """Create a matplotlib figure visualising parameters, state and error.
+
+        Parameters
+        ----------
+        save_fig : str or None
+            Optional path to save the generated figure.
+        idx : int or None
+            Optional frame index used when saving or annotating figures.
+
+        Returns
+        -------
+        matplotlib.figure.Figure
+            The constructed figure object.
+
+        """
         fig = plt.figure(figsize=(28, 8))
         gs = GridSpec(1, 3, figure=fig)
 
@@ -335,6 +500,11 @@ class EnergyBalanceModelEnv(gym.Env):
         return fig
 
     def render(self, **kwargs):
+        """Render the environment according to the configured mode.
+
+        Supports ``'human'`` (display the figure) and ``'rgb_array'`` (return
+        an RGB numpy array) modes as declared in :pyattr:`metadata`.
+        """
         if self.render_mode == "human":
             self._render_frame(**kwargs)
             plt.show()
@@ -349,7 +519,21 @@ class EnergyBalanceModelEnv(gym.Env):
 
 
 def run_ebm(seed, cid):
+    """Run the EBM client loop used by federated simulations.
 
+    This function is designed to be executed in a background process by the
+    federated client helper. It connects to the shared Redis server and
+    runs the local agent for a fixed number of timesteps.
+
+    Parameters
+    ----------
+    seed : int
+        Random seed for reproducibility.
+    cid : int
+        Client identifier selecting which sub-latitude interval this client
+        controls.
+
+    """
     set_seed(seed)
     envs = gym.vector.SyncVectorEnv(
         [make_env(functools.partial(EnergyBalanceModelEnv, cid=cid), seed, NUM_STEPS)]

@@ -1,7 +1,5 @@
-"""
-conftest.py
+"""Set thread / CPU limits early so test modules don't need to set env vars themselves.
 
-Set thread / CPU limits early so test modules don't need to set env vars themselves.
 This file is imported by pytest before any test modules, so environment variables
 and runtime threadpool limits will be applied before libraries like numpy/MKL/OpenBLAS
 are imported by tests.
@@ -81,7 +79,7 @@ _pin_affinity((0, 1))
 
 
 def pytest_sessionstart(session):
-    """pytest hook: run at session start. Warn if thread limits may not be applied."""
+    """Pytest hook: run at session start. Warn if thread limits may not be applied."""
     # simple checks that at least the env var is set
     try:
         if os.environ.get("OMP_NUM_THREADS") != "2":
@@ -91,7 +89,7 @@ def pytest_sessionstart(session):
 
 
 def pytest_unconfigure(config):
-    """pytest hook: clean up threadpoolctl context if we entered it."""
+    """Pytest hook: clean up threadpoolctl context if we entered it."""
     global _tpctl_ctx
     if _tpctl_ctx is not None:
         try:

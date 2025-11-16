@@ -51,7 +51,7 @@ class EBMUtils:
     precomputed climatological arrays used by the environment instances.
     """
 
-    BASE_DIR = "/gws/nopw/j04/ai4er/users/pn341/climate-rl-fedrl"
+    BASE_DIR = "."
     DATASETS_DIR = f"{BASE_DIR}/datasets"
 
     fp_Ts = f"{DATASETS_DIR}/skt.sfc.mon.1981-2010.ltm.nc"

@@ -1,26 +1,57 @@
 """Simple Climate Bias Correction example environment.
 
-This module provides a toy Gym environment ``SimpleClimateBiasCorrectionEnv``
-that simulates a single scalar temperature variable with a simple
+This module provides a toy Gym environment interface ``SimpleClimateBiasCorrectionEnv``
+a fortran-based environment that simulates a single scalar temperature variable with a simple
 physics-based relaxation and a bias-correction term. The environment is
 intentionally minimal and suitable for demos, examples and federated RL
 workflows used by the project.
 
-The file also exposes ``run_scbc`` which creates a vectorized environment
+The file also exposes ``run_scbc_f90`` which creates a vectorized environment
 and trains a DDPG agent via the project's ``FedRAIN`` API.
 """
+
+import functools
+import logging
+import os
+import time
 
 import gymnasium as gym
 import numpy as np
 import pygame
 from gymnasium import spaces
+from smartredis import Client
 
 from fedrain.api import FedRAIN
-from fedrain.utils import make_env, set_seed
+from fedrain.fedrl.server import Server
+from fedrain.utils import make_env, set_seed, setup_logger
 
 NUM_STEPS = 200
 TOTAL_TIMESTEPS = 2000
 ACTOR_LAYER_SIZE, CRITIC_LAYER_SIZE = 64, 64
+FORTRAN_DIR = "./examples/climate_models/f90"
+
+
+class SCBC:
+    """Simple Climate Bias Correction Fortran executable wrapper."""
+
+    def __init__(self, cid=0, execfn_f90=f"{FORTRAN_DIR}/scbc"):
+        """Create a SCBC Fortran executable wrapper.
+
+        Parameters
+        ----------
+        cid : int
+            Client identifier.
+        execfn_f90 : str
+            Path to the Fortran executable.
+        """
+
+        self.cid = cid
+        self.execfn_f90 = execfn_f90
+        self.cmd = self._get_cmd()
+
+    def _get_cmd(self):
+        """Return the command string to launch the Fortran SCBC client."""
+        return f"{self.execfn_f90} {self.cid}"
 
 
 class SimpleClimateBiasCorrectionEnv(gym.Env):
@@ -36,25 +67,30 @@ class SimpleClimateBiasCorrectionEnv(gym.Env):
         "render_fps": 30,
     }
 
-    def __init__(self, render_mode=None):
+    def __init__(self, cid, render_mode=None, level=logging.DEBUG):
         """Create the simple bias-correction environment.
 
         Parameters
         ----------
+        cid : int
+            Client identifier passed to the environment for Redis keys.
         render_mode : str or None
             If ``'human'`` the environment will create a visible Pygame
             window when rendering. If ``'rgb_array'`` rendering returns an
             RGB numpy array. If ``None`` rendering is disabled.
 
         """
+        self.cid = cid
+
         self.min_temperature = 0.0
         self.max_temperature = 1.0
         self.min_heating_rate = -1.0
         self.max_heating_rate = 1.0
-
         self.count = 0.0
         self.screen = None
         self.clock = None
+        self.wait_time = 0.001  # seconds
+        self.logger = setup_logger("SCBC", level)
 
         self.action_space = spaces.Box(
             low=self.min_heating_rate,
@@ -68,6 +104,15 @@ class SimpleClimateBiasCorrectionEnv(gym.Env):
             high=np.array([self.max_temperature], dtype=np.float32),
             dtype=np.float32,
         )
+
+        self.REDIS_ADDRESS = os.getenv("SSDB")
+        if self.REDIS_ADDRESS is None:
+            raise EnvironmentError("SSDB environment variable is not set.")
+        self.redis = Client(address=self.REDIS_ADDRESS, cluster=False)
+        self.logger.debug(f"Connected to Redis server: {self.REDIS_ADDRESS}")
+
+        self.redis.put_tensor(f"SIGALIVE_S{self.cid}", np.array([1], dtype=np.int32))
+
         assert render_mode is None or render_mode in self.metadata["render_modes"]
         self.render_mode = render_mode
 
@@ -96,24 +141,25 @@ class SimpleClimateBiasCorrectionEnv(gym.Env):
             info dict (currently empty placeholder).
 
         """
-        current_temperature = self.state[0]
         u = np.clip(u, self.min_heating_rate, self.max_heating_rate)[0]
 
+        self.redis.put_tensor(
+            f"py2f_redis_s{self.cid}", np.array([u], dtype=np.float64)
+        )
+        self.redis.put_tensor(f"SIGCOMPUTE_S{self.cid}", np.array([1], dtype=np.int32))
+
+        new_temperature = None
+        while new_temperature is None:
+            if self.redis.tensor_exists(f"f2py_redis_s{self.cid}"):
+                new_temperature = self.redis.get_tensor(f"f2py_redis_s{self.cid}")[0]
+                time.sleep(self.wait_time)
+                self.redis.delete_tensor(f"f2py_redis_s{self.cid}")
+            else:
+                continue  # Wait for the computation to complete
+
         observed_temperature = (321.75 - 273.15) / 100
-        physics_temperature = (380 - 273.15) / 100
-        division_constant = physics_temperature - observed_temperature
-        new_temperature = current_temperature + u
+        costs = (observed_temperature - new_temperature) ** 2
 
-        relaxation = (
-            (physics_temperature - current_temperature) * 0.2 / division_constant
-        )
-        new_temperature += relaxation
-        bias_correction = (
-            (observed_temperature - new_temperature) * 0.1 / division_constant
-        )
-        new_temperature += bias_correction
-
-        costs = bias_correction**2
         new_temperature = np.clip(
             new_temperature, self.min_temperature, self.max_temperature
         )
@@ -141,9 +187,23 @@ class SimpleClimateBiasCorrectionEnv(gym.Env):
 
         """
         super().reset(seed=seed)
-        self.state = np.array([(300 - 273.15) / 100])
+        self.redis.put_tensor(f"SIGSTART_S{self.cid}", np.array([1], dtype=np.int32))
+
+        initial_temperature = None
+        while initial_temperature is None:
+            if self.redis.tensor_exists(f"f2py_redis_s{self.cid}"):
+                initial_temperature = self.redis.get_tensor(f"f2py_redis_s{self.cid}")[
+                    0
+                ]
+                time.sleep(self.wait_time)
+                self.redis.delete_tensor(f"f2py_redis_s{self.cid}")
+            else:
+                continue  # Wait for the computation to complete
+
+        self.state = np.array([initial_temperature])
         if self.render_mode == "human":
             self._render_frame()
+
         return self._get_obs(), self._get_info()
 
     def _get_info(self):
@@ -286,8 +346,8 @@ class SimpleClimateBiasCorrectionEnv(gym.Env):
             self.clock = None
 
 
-def run_scbc(seed):
-    """Run a simple training loop using the project's FedRAIN API.
+def run_scbc_f90(seed, cid):
+    """Run the SCBC client loop using the project's FedRAIN API.
 
     This helper creates a vectorized environment, sets up a DDPG agent via
     :class:`fedrain.api.FedRAIN`, and runs a fixed number of training
@@ -297,11 +357,18 @@ def run_scbc(seed):
     ----------
     seed : int
         Random seed used to initialize environments and the agent.
-
+    cid : int
+        Client identifier passed to the environment constructor.
     """
     set_seed(seed)
     envs = gym.vector.SyncVectorEnv(
-        [make_env(SimpleClimateBiasCorrectionEnv, seed, NUM_STEPS)]
+        [
+            make_env(
+                functools.partial(SimpleClimateBiasCorrectionEnv, cid=cid),
+                seed,
+                NUM_STEPS,
+            )
+        ]
     )
     api = FedRAIN()
     agent = api.set_algorithm(
@@ -322,4 +389,9 @@ def run_scbc(seed):
 
 if __name__ == "__main__":
     seed = 1
-    run_scbc(seed)
+    parent_scbc = SCBC(cid=0, execfn_f90=f"{FORTRAN_DIR}/scbc")
+
+    server = Server(with_redis=True)
+    server.start_process(parent_scbc.cmd)
+    server.run(run_scbc_f90, seed, cid=0)
+    server.stop()

@@ -6,6 +6,7 @@ Flower-based federated simulations in local experiments.
 
 import functools
 import multiprocessing
+import subprocess
 
 import flwr as fl
 import gymnasium as gym
@@ -13,7 +14,7 @@ import ray
 from flwr.common import FitIns
 
 from fedrain.fedrl.client import generate_client_fn
-from fedrain.utils import RedisServer, make_env
+from fedrain.utils import RedisServer, make_env, set_deathsig
 
 
 class FedAvg(fl.server.strategy.FedAvg):
@@ -92,21 +93,37 @@ class Server:
     It is intended to be subclassed by concrete server implementations.
     """
 
-    def __init__(self):
+    def __init__(self, with_redis=False):
         """Initialize the base Server process manager.
 
         The Server tracks started background processes and provides helpers
         to start and stop them.
         """
         self.process_fns, self._process_objs = [], []
+        if with_redis:
+            self.with_redis = True
+            self.redis = RedisServer()
+            self.redis.start()
 
-    def start_process(self, process_fn):
+    def start_process(self, cmd):
+        """Start a background executable process running ``process_fn``."""
+
+        proc = subprocess.Popen(
+            cmd.split(),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            preexec_fn=set_deathsig,
+        )
+        self._process_objs.append((proc, {"exec": True}))
+        return proc
+
+    def start_process_fn(self, process_fn):
         """Start a background process executing ``process_fn``.
 
         Parameters
         ----------
         process_fn : callable
-            Function to run in a separate process.
+            Function
 
         Returns
         -------
@@ -117,15 +134,23 @@ class Server:
         proc = multiprocessing.Process(target=process_fn)
         proc.daemon = True
         proc.start()
-        self._process_objs.append(proc)
+        self._process_objs.append((proc, {"exec": False}))
         return proc
+
+    def run(self, fn, *args, **kwargs):
+        """Run a function in a blocking manner."""
+        return fn(*args, **kwargs)
 
     def stop(self):
         """Shutdown Ray and terminate any started background processes."""
-        ray.shutdown()
-        for proc in self._process_objs:
+        for proc, info in self._process_objs:
             proc.terminate()
-            proc.join()
+            if not info["exec"]:
+                proc.join()
+            else:
+                proc.wait()
+        if self.with_redis:
+            self.redis.stop()
 
     def serve(self, *args, **kwargs):
         """Serve method to be implemented by subclasses.
@@ -157,7 +182,7 @@ class FLWRServer(Server):
             Flower strategy to use (default: FedAvg wrapper).
 
         """
-        super().__init__()
+        super().__init__(with_redis=True)
         self.num_clients = num_clients
         self.num_rounds = num_rounds
         self.strategy = strategy(
@@ -165,8 +190,6 @@ class FLWRServer(Server):
             min_available_clients=num_clients,
             fraction_evaluate=0.0,
         )
-        self.redis = RedisServer()
-        self.redis.start()
 
     def generate_actor(self, env_class, actor_class, layer_size):
         """Instantiate a template actor used by client processes.
@@ -231,5 +254,5 @@ class FLWRServer(Server):
 
     def stop(self):
         """Stop the server and clean up resources (Ray, Redis, processes)."""
+        ray.shutdown()
         super().stop()
-        self.redis.stop()

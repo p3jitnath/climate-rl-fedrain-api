@@ -717,6 +717,6 @@ if __name__ == "__main__":
     server = FLWRServer(NUM_CLIENTS, FLWR_ROUNDS)
     server.generate_actor(EnergyBalanceModelEnv, DDPGActor, ACTOR_LAYER_SIZE)
     server.set_client(seed=seed, fn=run_ebm_subprocess, num_steps=NUM_STEPS)
-    server.start_process(parent_ebm.run)
+    server.start_process_fn(parent_ebm.run)
     server.serve()
     server.stop()

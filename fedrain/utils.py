@@ -122,6 +122,19 @@ def set_seed(seed):
     torch.backends.cudnn.deterministic = True
 
 
+def set_deathsig():
+    """Set the parent-death signal in the child process.
+
+    This ensures the spawned redis-server receives SIGTERM when the
+    parent process dies, helping to avoid orphaned processes.
+    """
+    import ctypes
+
+    libc = ctypes.CDLL("libc.so.6")
+    PR_SET_PDEATHSIG = 1
+    libc.prctl(PR_SET_PDEATHSIG, signal.SIGTERM)
+
+
 class RedisServer:
     """Manage a local ``redis-server`` process for testing and simulations.
 
@@ -170,18 +183,6 @@ class RedisServer:
             "--loadmodule",
             os.path.expanduser("~/redisai/redisai.so"),
         ]
-
-        def set_deathsig():
-            """Set the parent-death signal in the child process.
-
-            This ensures the spawned redis-server receives SIGTERM when the
-            parent process dies, helping to avoid orphaned processes.
-            """
-            import ctypes
-
-            libc = ctypes.CDLL("libc.so.6")
-            PR_SET_PDEATHSIG = 1
-            libc.prctl(PR_SET_PDEATHSIG, signal.SIGTERM)
 
         redis_proc = subprocess.Popen(
             cmd,

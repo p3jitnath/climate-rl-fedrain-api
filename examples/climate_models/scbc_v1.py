@@ -76,10 +76,8 @@ class SimpleClimateBiasCorrectionEnv(gym.Env):
 
         The dynamics are a simple Euler-like update: the agent's action
         ``u`` (heating rate) is applied, then the state relaxes partially
-        toward a physics temperature and a small bias-correction term is
-        applied to nudge the state toward an observed temperature. The
-        reward returned is the negative squared bias correction (so the
-        agent is incentivized to reduce bias).
+        toward a physics temperature. The reward returned is the negative squared error
+        between the observed and predicted temperatures.
 
         Parameters
         ----------
@@ -108,12 +106,9 @@ class SimpleClimateBiasCorrectionEnv(gym.Env):
             (physics_temperature - current_temperature) * 0.2 / division_constant
         )
         new_temperature += relaxation
-        bias_correction = (
-            (observed_temperature - new_temperature) * 0.1 / division_constant
-        )
-        new_temperature += bias_correction
 
-        costs = bias_correction**2
+        costs = (observed_temperature - new_temperature) ** 2
+
         new_temperature = np.clip(
             new_temperature, self.min_temperature, self.max_temperature
         )

@@ -144,16 +144,16 @@ class SimpleClimateBiasCorrectionEnv(gym.Env):
         u = np.clip(u, self.min_heating_rate, self.max_heating_rate)[0]
 
         self.redis.put_tensor(
-            f"py2f_redis_s{self.cid}", np.array([u], dtype=np.float64)
+            f"PY2F_REDIS_S{self.cid}", np.array([u], dtype=np.float64)
         )
         self.redis.put_tensor(f"SIGCOMPUTE_S{self.cid}", np.array([1], dtype=np.int32))
 
         new_temperature = None
         while new_temperature is None:
-            if self.redis.tensor_exists(f"f2py_redis_s{self.cid}"):
-                new_temperature = self.redis.get_tensor(f"f2py_redis_s{self.cid}")[0]
+            if self.redis.tensor_exists(f"F2PY_REDIS_S{self.cid}"):
+                new_temperature = self.redis.get_tensor(f"F2PY_REDIS_S{self.cid}")[0]
                 time.sleep(self.wait_time)
-                self.redis.delete_tensor(f"f2py_redis_s{self.cid}")
+                self.redis.delete_tensor(f"F2PY_REDIS_S{self.cid}")
             else:
                 continue  # Wait for the computation to complete
 
@@ -191,12 +191,12 @@ class SimpleClimateBiasCorrectionEnv(gym.Env):
 
         initial_temperature = None
         while initial_temperature is None:
-            if self.redis.tensor_exists(f"f2py_redis_s{self.cid}"):
-                initial_temperature = self.redis.get_tensor(f"f2py_redis_s{self.cid}")[
+            if self.redis.tensor_exists(f"F2PY_REDIS_S{self.cid}"):
+                initial_temperature = self.redis.get_tensor(f"F2PY_REDIS_S{self.cid}")[
                     0
                 ]
                 time.sleep(self.wait_time)
-                self.redis.delete_tensor(f"f2py_redis_s{self.cid}")
+                self.redis.delete_tensor(f"F2PY_REDIS_S{self.cid}")
             else:
                 continue  # Wait for the computation to complete
 

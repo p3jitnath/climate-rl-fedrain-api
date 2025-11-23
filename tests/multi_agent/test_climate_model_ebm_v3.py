@@ -121,7 +121,7 @@ def test_ebm_v3_episodic_return_matches_expected():
     parent_ebm = EBM()
     server.generate_actor(EnergyBalanceModelEnv, DDPGActor, ACTOR_LAYER_SIZE)
     server.set_client(seed=SEED, fn=run_ebm_subprocess, num_steps=NUM_STEPS)
-    server.start_process(parent_ebm.run)
+    server.start_process_fn(parent_ebm.run)
     server.serve()
     server.stop()
 

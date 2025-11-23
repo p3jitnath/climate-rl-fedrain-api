@@ -38,8 +38,8 @@ program main
     ! Set the keys used to signal computation start and start with the cid
     write(k_sigcompute, '("SIGCOMPUTE_S", i0)') cid
     write(k_sigstart, '("SIGSTART_S", i0)') cid
-    write(k_f2py,'("f2py_redis_s", i0)') cid
-    write(k_py2f,'("py2f_redis_s", i0)') cid
+    write(k_f2py,'("F2PY_REDIS_S", i0)') cid
+    write(k_py2f,'("PY2F_REDIS_S", i0)') cid
 
     wait_time = 0.001 ! seconds to wait between checks
 
@@ -79,7 +79,7 @@ program main
 
             print *, 'The value of f2py_redis is: ', f2py_redis
 
-            ! Send the initial temperature to Redis under key "f2py_redis"
+            ! Send the initial temperature to Redis under key "F2PY_REDIS"
             status = client%put_tensor(k_f2py, f2py_redis, shape(f2py_redis))
             if (status .ne. SRNoError) error stop 'client%put_tensor failed'
 
@@ -95,14 +95,14 @@ program main
             status = client%delete_tensor(k_sigcompute)
             if (status .ne. SRNoError) error stop 'client%delete_tensor failed for SIGCOMPUTE'
 
-            ! Retrieve the heating increment (u) from Redis into "py2f_redis"
+            ! Retrieve the heating increment (u) from Redis into "PY2F_REDIS"
             status = client%unpack_tensor(k_py2f, py2f_redis, shape(py2f_redis))
             if (status .ne. SRNoError) error stop 'client%unpack_tensor failed'
 
             ! Reset the heating increment (u) after processing it
             call sleep(wait_time)
             status = client%delete_tensor(k_py2f)
-            if (status .ne. SRNoError) error stop 'client%delete_tensor failed for py2f_redis'
+            if (status .ne. SRNoError) error stop 'client%delete_tensor failed for PY2F_REDIS'
 
             ! Perform computation (update current temperature using forward subroutine)
             u = py2f_redis(1) ! Heating increment received from Redis
@@ -114,7 +114,7 @@ program main
 
             print *, 'The value of f2py_redis is: ', f2py_redis
 
-            ! Send the updated temperature (new_temperature) to Redis under key "f2py_redis"
+            ! Send the updated temperature (new_temperature) to Redis under key "F2PY_REDIS"
             status = client%put_tensor(k_f2py, f2py_redis, shape(f2py_redis))
             if (status .ne. SRNoError) error stop 'client%put_tensor failed'
 

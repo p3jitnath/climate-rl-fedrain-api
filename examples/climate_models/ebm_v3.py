@@ -71,7 +71,7 @@ class EBM:
         - Wait for clients to signal they are ready (``SIGSTART``).
         - Publish initial model state to requesting clients.
         - Wait for all clients to publish parameter proposals
-          (``py2f_redis_s{cid}``).
+          (``PY2F_REDIS_S{cid}``).
         - Aggregate parameters, update the central ClimLab model and step
           it forward.
         - Publish the updated model state back to clients for the next step.
@@ -214,7 +214,7 @@ class EBM:
                         time.sleep(WAIT_TIME)
 
                         utils.redis.put_tensor(
-                            f"f2py_redis_s{cid}",
+                            f"F2PY_REDIS_S{cid}",
                             np.array(
                                 [
                                     cebm.ebm.Ts,
@@ -233,13 +233,13 @@ class EBM:
                 while sum(exists.params) != NUM_CLIENTS:
                     for idx, cid in enumerate(range(NUM_CLIENTS)):
                         if params[idx] is None:
-                            if utils.redis.tensor_exists(f"py2f_redis_s{cid}"):
+                            if utils.redis.tensor_exists(f"PY2F_REDIS_S{cid}"):
                                 params[idx] = utils.redis.get_tensor(
-                                    f"py2f_redis_s{cid}"
+                                    f"PY2F_REDIS_S{cid}"
                                 )
                                 exists.params[idx] = 1
                                 time.sleep(WAIT_TIME)
-                                utils.redis.delete_tensor(f"py2f_redis_s{cid}")
+                                utils.redis.delete_tensor(f"PY2F_REDIS_S{cid}")
                             else:
                                 continue
 
@@ -263,7 +263,7 @@ class EBM:
                     utils.redis.delete_tensor(f"SIGCOMPUTE_S{cid}")
                     time.sleep(WAIT_TIME)
                     utils.redis.put_tensor(
-                        f"f2py_redis_s{cid}",
+                        f"F2PY_REDIS_S{cid}",
                         np.array([cebm.ebm.Ts, cebm.climlab_ebm.Ts], dtype=np.float32),
                     )
 
@@ -287,7 +287,7 @@ class EnergyBalanceModelEnv(gym.Env):
     Notes
     -----
     Communication with the server uses SmartRedis tensors with keys like
-    ``py2f_redis_s{cid}``, ``f2py_redis_s{cid}`` and control signals
+    ``PY2F_REDIS_S{cid}``, ``F2PY_REDIS_S{cid}`` and control signals
     ``SIGSTART_S{cid}``, ``SIGCOMPUTE_S{cid}``.
 
     """
@@ -447,7 +447,7 @@ class EnergyBalanceModelEnv(gym.Env):
         self.a2 = np.clip(self.a2, self.min_a2, self.max_a2)
 
         self.redis.put_tensor(
-            f"py2f_redis_s{self.cid}",
+            f"PY2F_REDIS_S{self.cid}",
             np.array(
                 [self.D, *(self.A * 1e2), *(self.B), self.a0, self.a2],
                 dtype=np.float32,
@@ -457,12 +457,12 @@ class EnergyBalanceModelEnv(gym.Env):
 
         self.ebm_Ts = None
         while self.ebm_Ts is None:
-            if self.redis.tensor_exists(f"f2py_redis_s{self.cid}"):
+            if self.redis.tensor_exists(f"F2PY_REDIS_S{self.cid}"):
                 self.ebm_Ts, self.climlab_ebm_Ts = self.redis.get_tensor(
-                    f"f2py_redis_s{self.cid}"
+                    f"F2PY_REDIS_S{self.cid}"
                 )
                 time.sleep(self.wait_time)
-                self.redis.delete_tensor(f"f2py_redis_s{self.cid}")
+                self.redis.delete_tensor(f"F2PY_REDIS_S{self.cid}")
             else:
                 continue
 
@@ -521,15 +521,15 @@ class EnergyBalanceModelEnv(gym.Env):
 
         self.ebm_Ts = None
         while self.ebm_Ts is None:
-            if self.redis.tensor_exists(f"f2py_redis_s{self.cid}"):
+            if self.redis.tensor_exists(f"F2PY_REDIS_S{self.cid}"):
                 (
                     self.ebm_Ts,
                     self.climlab_ebm_Ts,
                     self.Ts_ncep_annual,
                     self.ebm_lat,
-                ) = self.redis.get_tensor(f"f2py_redis_s{self.cid}")
+                ) = self.redis.get_tensor(f"F2PY_REDIS_S{self.cid}")
                 time.sleep(self.wait_time)
-                self.redis.delete_tensor(f"f2py_redis_s{self.cid}")
+                self.redis.delete_tensor(f"F2PY_REDIS_S{self.cid}")
             else:
                 continue
 

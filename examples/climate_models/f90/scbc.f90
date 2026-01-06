@@ -4,7 +4,7 @@ program main
     use smartredis_client, only : client_type
     implicit none
 
-#include "enum_fortran.inc"
+include "enum_fortran.inc"
 
     ! Define dimensions for the heating increment tensor (1D array of size dim1)
     integer, parameter :: dim1 = 1

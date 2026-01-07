@@ -61,6 +61,8 @@ pip install -e .
 
 If you require a GPU-specific PyTorch build, install it manually following [PyTorch’s official guide](https://pytorch.org/) before running the `pip install -e .` command.
 
+For air-gapped machines use the `--no-index --no-build-isolation` flags with `pip`.
+
 **SmartSim setup:**
 Follow the installation notes here for Redis and RedisAI configuration:
 👉 [https://gist.github.com/p3jitnath/aa790c560b2f71462c99f88f112815ef](https://gist.github.com/p3jitnath/aa790c560b2f71462c99f88f112815ef)

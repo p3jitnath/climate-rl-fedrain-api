@@ -33,6 +33,7 @@ import time
 
 import gymnasium as gym
 import numpy as np
+import psutil
 import torch
 
 
@@ -136,24 +137,41 @@ def set_deathsig():
     libc.prctl(PR_SET_PDEATHSIG, signal.SIGTERM)
 
 
-def get_ip_address():
-    """Return the local IP address.
-
-    Attempts to determine the host's outward-facing IP by creating a UDP socket
-    and "connecting" to an external host (8.8.8.8:80) without sending data. On
-    success returns the socket's local address. If any error occurs, returns the
-    loopback address "127.0.0.1" as a sensible fallback.
-
-    Returns:
-        str: The detected local IP address or "127.0.0.1" on failure.
+def get_ip_from_interface(interface="lo"):
     """
-    try:
-        # Use a dummy connection to an external host
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            s.connect(("8.8.8.8", 80))  # Doesn't send data
-            return s.getsockname()[0]
-    except Exception:
-        return "127.0.0.1"  # fallback to localhost
+    Get the IPv4 address for a given network interface.
+
+    Parameters
+    ----------
+    interface : str, optional
+        Name of the network interface to query (default 'lo').
+
+    Returns
+    -------
+    str
+        IPv4 address assigned to the specified interface.
+
+    Raises
+    ------
+    ValueError
+        If the interface is not present in psutil.net_if_addrs() or if it has no IPv4 address.
+
+    Notes
+    -----
+    This function inspects psutil.net_if_addrs() and returns the first address whose
+    family is socket.AF_INET.
+    """
+    available = psutil.net_if_addrs()
+    if interface not in available:
+        raise ValueError(
+            f"{interface} is not a valid network interface. "
+            f"Valid network interfaces are: {list(available.keys())}"
+        )
+
+    for info in available[interface]:
+        if info.family == socket.AF_INET:
+            return info.address
+    raise ValueError(f"interface {interface} doesn't have an IPv4 address")
 
 
 def get_urandom_redis_port():

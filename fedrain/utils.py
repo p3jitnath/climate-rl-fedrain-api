@@ -26,6 +26,7 @@ import random
 import shutil
 import signal
 import socket
+import struct
 import subprocess
 import sys
 import time
@@ -133,6 +134,70 @@ def set_deathsig():
     libc = ctypes.CDLL("libc.so.6")
     PR_SET_PDEATHSIG = 1
     libc.prctl(PR_SET_PDEATHSIG, signal.SIGTERM)
+
+
+def get_ip_address():
+    """Return the local IP address.
+
+    Attempts to determine the host's outward-facing IP by creating a UDP socket
+    and "connecting" to an external host (8.8.8.8:80) without sending data. On
+    success returns the socket's local address. If any error occurs, returns the
+    loopback address "127.0.0.1" as a sensible fallback.
+
+    Returns:
+        str: The detected local IP address or "127.0.0.1" on failure.
+    """
+    try:
+        # Use a dummy connection to an external host
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))  # Doesn't send data
+            return s.getsockname()[0]
+    except Exception:
+        return "127.0.0.1"  # fallback to localhost
+
+
+def get_urandom_redis_port():
+    """
+    Return a pseudorandom TCP port number intended for Redis.
+
+    This function:
+    - Reads 4 bytes from /dev/urandom and interprets them as an unsigned integer.
+    - Chooses a base port uniformly at random from 12581 to 24580 (inclusive).
+    - Adds (hrand % 1000) to the base port to produce the final port.
+
+    Returns:
+        int: A candidate port number in the inclusive range 12581..25579.
+
+    Notes:
+        - The function does not check whether the returned port is available; callers
+          must verify and handle port collisions.
+        - The final distribution is not purely uniform due to the additive modulo step.
+    """
+    with open("/dev/urandom", "rb") as f:
+        hrand_bytes = f.read(4)
+    hrand = struct.unpack("I", hrand_bytes)[0]
+    redis_port = random.randint(12581, 24580)
+    redis_port += hrand % 1000
+    return redis_port
+
+
+def get_ssdb_redis_port():
+    """
+    Return the Redis port extracted from the SSDB environment variable.
+
+    Reads the SSDB environment variable, which is expected to be either a port
+    ("6379") or a host:port string ("hostname:6379"), and returns the port as an int.
+
+    Returns:
+        int: Redis port number.
+
+    Raises:
+        EnvironmentError: If the SSDB environment variable is not set.
+    """
+    redis_port = os.getenv("SSDB")
+    if not redis_port:
+        raise EnvironmentError("The environment variable $SSDB is not set.")
+    return int(redis_port.split(":")[-1])
 
 
 class RedisServer:

@@ -265,6 +265,8 @@ class RedisServer:
             str(redis_port),
             "--loadmodule",
             os.path.expanduser("~/redisai/redisai.so"),
+            "--protected-mode",
+            "no",
         ]
 
         redis_proc = subprocess.Popen(

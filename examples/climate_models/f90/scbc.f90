@@ -49,7 +49,7 @@ include "enum_fortran.inc"
     current_temperature = initial_temperature
 
     ! Initialize the Redis client
-    status = client%initialize(.false.)
+    status = client%initialize("smartredis client")
     if (status .ne. SRNoError) error stop 'client%initialize failed'
 
     print *, "Waiting for computation or start signal..."

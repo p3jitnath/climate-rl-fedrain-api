@@ -228,8 +228,8 @@ class RedisServer:
 
     Parameters
     ----------
-    redis_port : int, optional
-        TCP port to bind the redis-server process (default: 6379).
+    redis_address : str, optional
+        Address to bind the redis-server process (default: "localhost")
 
     """
 
@@ -239,13 +239,13 @@ class RedisServer:
         Parameters
         ----------
         redis_port : int, optional
-            TCP port to bind the redis-server process (default: 6379).
+            Port to bind the redis-server process (default: 6379).
 
         """
         self.redis_port = redis_port
         self.redis_proc = None
 
-    def _instantiate_redis_server(self, redis_port=6379):
+    def _instantiate_redis_server(self, interface, rediscli_config):
         redis_bin = shutil.which("redis-server")
         if redis_bin is None:
             raise RuntimeError(
@@ -262,12 +262,15 @@ class RedisServer:
         cmd = [
             redis_bin,
             "--port",
-            str(redis_port),
+            str(self.redis_port),
             "--loadmodule",
             os.path.expanduser("~/redisai/redisai.so"),
-            "--protected-mode",
-            "no",
         ]
+
+        # Append additional CLI flags from rediscli_config as: --flag value
+        for k, v in rediscli_config.items():
+            flag = f"--{k}"
+            cmd.extend([flag, str(v)])
 
         redis_proc = subprocess.Popen(
             cmd,
@@ -278,16 +281,20 @@ class RedisServer:
 
         for _ in range(50):
             try:
-                with socket.create_connection(("127.0.0.1", redis_port), timeout=0.5):
+                with socket.create_connection(
+                    ("localhost", self.redis_port), timeout=0.5
+                ):
                     break
             except OSError:
                 time.sleep(0.1)
         else:
             redis_proc.terminate()
-            raise RuntimeError("Failed to start redis-server on localhost")
+            raise RuntimeError(
+                f"Failed to start redis-server on localhost:{self.redis_port}"
+            )
 
-        redis_address = f"127.0.0.1:{redis_port}"
-        os.environ["SSDB"] = redis_address
+        self.redis_address = get_ip_from_interface(interface) + f":{self.redis_port}"
+        os.environ["SSDB"] = self.redis_address
 
         return redis_proc
 
@@ -304,9 +311,9 @@ class RedisServer:
             redis_proc.terminate()
             redis_proc.wait()
 
-    def start(self):
+    def start(self, interface="lo", rediscli_config={}):
         """Start a local redis-server and record its process handle."""
-        self.redis_proc = self._instantiate_redis_server(self.redis_port)
+        self.redis_proc = self._instantiate_redis_server(interface, rediscli_config)
 
     def stop(self):
         """Stop the managed redis-server and clear the internal handle."""

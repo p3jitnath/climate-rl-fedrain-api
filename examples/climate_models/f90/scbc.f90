@@ -41,7 +41,7 @@ include "enum_fortran.inc"
     write(k_f2py,'("F2PY_REDIS_S", i0)') cid
     write(k_py2f,'("PY2F_REDIS_S", i0)') cid
 
-    wait_time = 0.001 ! seconds to wait between checks
+    wait_time = 0.001 ! seconds to wait between checks (less than 1 second is rounded to 0)
 
     ! Initialize the current temperature (300 - 273.15) / 100
     ! Supports 8 different cids 0-7 (inclusive)
@@ -70,9 +70,9 @@ include "enum_fortran.inc"
             print *, "Start signal received. Resetting temperature..."
 
             ! Delete the start signal before processing it
+            call sleep(wait_time)
             status = client%delete_tensor(k_sigstart)
             if (status .ne. SRNoError) error stop 'client%delete_tensor failed for SIGSTART'
-            call sleep(wait_time)
 
             f2py_redis(1) = initial_temperature ! Store the start result
             current_temperature = initial_temperature ! Reset the temperature

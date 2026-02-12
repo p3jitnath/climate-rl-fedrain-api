@@ -161,6 +161,8 @@ class DDPG(BaseAlgorithm):
         action spaces used to build networks and the replay buffer.
     seed : int
         Random seed used for environment reset and reproducibility.
+    n_envs : int, optional
+        Number of parallel environments (if using vectorized env) (default 1).
     learning_rate : float, optional
         Learning rate for both actor and critic optimizers (default 3e-4).
     buffer_size : int, optional
@@ -200,6 +202,7 @@ class DDPG(BaseAlgorithm):
         self,
         envs,
         seed,
+        n_envs=1,
         learning_rate=3e-4,
         buffer_size=int(1e6),
         gamma=0.99,
@@ -228,6 +231,7 @@ class DDPG(BaseAlgorithm):
 
         self.envs = envs
         self.seed = seed
+        self.n_envs = n_envs
         self.learning_rate = learning_rate
         self.buffer_size = buffer_size
         self.gamma = gamma
@@ -262,6 +266,7 @@ class DDPG(BaseAlgorithm):
             self.envs.single_observation_space,
             self.envs.single_action_space,
             self.device,
+            n_envs=self.n_envs,
             handle_timeout_termination=False,
         )
 
@@ -334,7 +339,6 @@ class DDPG(BaseAlgorithm):
                     self.logger.debug(
                         f"seed={self.seed}, global_step={self.global_step}, episodic_return={info['episode']['r']}"
                     )
-                break
 
         real_next_obs = next_obs.copy()
         for idx, trunc in enumerate(truncations):

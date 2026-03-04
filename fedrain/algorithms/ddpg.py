@@ -4,7 +4,9 @@ This module implements a compact DDPG agent (actor, critic, replay
 buffer and training loop) intended for experiments and integration tests.
 """
 
+import json
 import logging
+import os
 
 import numpy as np
 import torch
@@ -278,6 +280,144 @@ class DDPG(BaseAlgorithm):
 
         self.obs, _ = envs.reset(seed=self.seed)
         self.global_step = 1
+
+    def save(self, folder_path, replay_buffer=True):
+        """Save model weights, optimizers and optionally replay buffer to *folder_path*.
+
+        Parameters
+        ----------
+        folder_path : str
+            Directory where checkpoint files will be written. The directory
+            will be created if it does not exist.
+
+        replay_buffer : bool, optional
+            If True, save the replay buffer as well (default is True).
+
+        Notes
+        -----
+        Files written:
+        - actor.pt, qf1.pt, target_actor.pt, qf1_target.pt
+        - actor_opt.pt, q_opt.pt
+        - replay_buffer.pt (torch-saved object or dict fallback)
+        - metadata.json
+
+        """
+        os.makedirs(folder_path, exist_ok=True)
+
+        torch.save(self.actor.state_dict(), os.path.join(folder_path, "actor.pt"))
+        torch.save(self.qf1.state_dict(), os.path.join(folder_path, "qf1.pt"))
+        torch.save(
+            self.target_actor.state_dict(), os.path.join(folder_path, "target_actor.pt")
+        )
+        torch.save(
+            self.qf1_target.state_dict(), os.path.join(folder_path, "qf1_target.pt")
+        )
+
+        torch.save(
+            self.actor_optimizer.state_dict(), os.path.join(folder_path, "actor_opt.pt")
+        )
+        torch.save(self.q_optimizer.state_dict(), os.path.join(folder_path, "q_opt.pt"))
+
+        if replay_buffer:
+            rb_file = os.path.join(folder_path, "replay_buffer.pt")
+            try:
+                torch.save(self.rb, rb_file)
+            except Exception:
+                try:
+                    torch.save(self.rb.__dict__, rb_file)
+                except Exception as e:
+                    self.logger.warning(f"Failed to save replay buffer: {e}")
+
+        meta = {
+            "global_step": int(self.global_step),
+            "seed": int(self.seed),
+            "device": str(self.device),
+        }
+        with open(os.path.join(folder_path, "metadata.json"), "w") as fh:
+            json.dump(meta, fh)
+
+    def load(self, folder_path, replay_buffer=True):
+        """Load model weights, optimizers and optionally replay buffer from *folder_path*.
+
+        Parameters
+        ----------
+        folder_path : str
+            Directory containing checkpoint files previously written by
+            :meth:`save`.
+        replay_buffer : bool, optional
+            If True, load the replay buffer as well (default is True).
+
+        """
+        # models
+        actor_file = os.path.join(folder_path, "actor.pt")
+        qf1_file = os.path.join(folder_path, "qf1.pt")
+        target_actor_file = os.path.join(folder_path, "target_actor.pt")
+        qf1_target_file = os.path.join(folder_path, "qf1_target.pt")
+
+        if os.path.exists(actor_file):
+            self.actor.load_state_dict(torch.load(actor_file, map_location=self.device))
+        if os.path.exists(qf1_file):
+            self.qf1.load_state_dict(torch.load(qf1_file, map_location=self.device))
+        if os.path.exists(target_actor_file):
+            self.target_actor.load_state_dict(
+                torch.load(target_actor_file, map_location=self.device)
+            )
+        if os.path.exists(qf1_target_file):
+            self.qf1_target.load_state_dict(
+                torch.load(qf1_target_file, map_location=self.device)
+            )
+
+        # optimizers
+        actor_opt_file = os.path.join(folder_path, "actor_opt.pt")
+        q_opt_file = os.path.join(folder_path, "q_opt.pt")
+        if os.path.exists(actor_opt_file):
+            try:
+                self.actor_optimizer.load_state_dict(
+                    torch.load(actor_opt_file, map_location=self.device)
+                )
+            except Exception:
+                self.logger.warning("Failed to load actor optimizer state")
+        if os.path.exists(q_opt_file):
+            try:
+                self.q_optimizer.load_state_dict(
+                    torch.load(q_opt_file, map_location=self.device)
+                )
+            except Exception:
+                self.logger.warning("Failed to load critic optimizer state")
+
+        # replay buffer
+        rb_file = os.path.join(folder_path, "replay_buffer.pt")
+        if os.path.exists(rb_file) and replay_buffer:
+            try:
+                loaded = torch.load(rb_file, map_location=self.device)
+                if isinstance(loaded, ReplayBuffer):
+                    self.rb = loaded
+                elif isinstance(loaded, dict):
+                    try:
+                        self.rb.__dict__.update(loaded)
+                    except Exception:
+                        self.logger.warning(
+                            "Failed to apply replay buffer dict to current buffer"
+                        )
+                else:
+                    # unknown object type; attempt to replace if possible
+                    try:
+                        self.rb = loaded
+                    except Exception:
+                        self.logger.warning("Loaded replay buffer could not be applied")
+            except Exception as e:
+                self.logger.warning(f"Failed to load replay buffer: {e}")
+
+        # metadata
+        meta_file = os.path.join(folder_path, "metadata.json")
+        if os.path.exists(meta_file):
+            try:
+                with open(meta_file, "r") as fh:
+                    meta = json.load(fh)
+                self.global_step = int(meta.get("global_step", self.global_step))
+                self.seed = int(meta.get("seed", self.seed))
+            except Exception:
+                self.logger.warning("Failed to read metadata.json")
 
     def predict(self, obs):
         """Compute actions for given observations.

@@ -19,6 +19,9 @@ added by extending :meth:`FedRAIN.set_algorithm`.
 
 """
 
+import os
+import tempfile
+
 from fedrain.algorithms.ddpg import DDPG
 
 
@@ -85,4 +88,49 @@ class FedRAIN:
         else:
             raise ValueError(
                 f"Algorithm '{name}' is not supported by FedRAIN. Please choose a valid RL algorithm (e.g., 'DDPG')."
+            )
+
+    def save_weights(self, agent, folder=None, replay_buffer=True):
+        """Save an agent's weights and optionally its replay buffer to *folder*.
+
+        If *folder* is None a temporary directory under `$TMPDIR` (or system
+        default tempdir) is created and returned.
+
+        Returns
+        -------
+        str
+            Path to the folder where checkpoint files were written.
+        """
+        if folder is None:
+            base = os.getenv("TMPDIR") or None
+            folder = tempfile.mkdtemp(prefix="fedrain_ckpt_", dir=base)
+        os.makedirs(folder, exist_ok=True)
+        if hasattr(agent, "save"):
+            agent.save(folder, replay_buffer=replay_buffer)
+        else:
+            raise AttributeError(
+                "Provided agent does not implement 'save(folder, replay_buffer)'"
+            )
+        return folder
+
+    def load_weights(self, agent, folder, replay_buffer=True):
+        """Load an agent's weights and optionally its replay buffer from *folder*.
+
+        Parameters
+        ----------
+        agent : object
+            Agent instance created by the API (must implement ``load(folder, replay_buffer)``).
+        folder : str
+            Path to a checkpoint directory previously produced by
+            :meth:`save_weights`.
+        replay_buffer : bool, optional
+            If True, load the replay buffer as well (default is True).
+        """
+        if not os.path.isdir(folder):
+            raise ValueError(f"Checkpoint folder does not exist: {folder}")
+        if hasattr(agent, "load"):
+            agent.load(folder, replay_buffer=replay_buffer)
+        else:
+            raise AttributeError(
+                "Provided agent does not implement 'load(folder, replay_buffer)'"
             )

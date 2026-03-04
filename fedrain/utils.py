@@ -37,7 +37,7 @@ import psutil
 import torch
 
 
-def setup_logger(name, level=logging.INFO):
+def setup_logger(name, level=logging.INFO, only_rank0=True):
     """Create or return a configured logger.
 
     This helper creates a :class:`logging.Logger` with a stdout stream
@@ -51,6 +51,9 @@ def setup_logger(name, level=logging.INFO):
         Name of the logger.
     level : int, optional
         Logging level to apply to the logger (default: ``logging.INFO``).
+    only_rank0 : bool, optional
+        If True, the logger will output to stdout on rank 0 and be silent on
+        other ranks. If False, the logger will output to stdout on all ranks (default: True).
 
     Returns
     -------
@@ -60,10 +63,27 @@ def setup_logger(name, level=logging.INFO):
     """
     logger = logging.getLogger(name)
     if not logger.hasHandlers():
-        handler = logging.StreamHandler(sys.stdout)
-        formatter = logging.Formatter("[%(levelname)s] %(name)s: %(message)s")
-        handler.setFormatter(formatter)
-        logger.addHandler(handler)
+
+        # try to detect MPI rank; if unavailable assume rank 0.
+        try:
+            from mpi4py import MPI
+
+            rank = MPI.COMM_WORLD.Get_rank()
+        except Exception:
+            rank = 0
+
+        formatter = logging.Formatter(
+            "[%(rank)03d, %(levelname)-5s] %(name)s: %(message)s"
+        )
+
+        if only_rank0 and rank != 0:
+            logger.addHandler(logging.NullHandler())
+        else:
+            handler = logging.StreamHandler(sys.stdout)
+            handler.setFormatter(formatter)
+            logger.addHandler(handler)
+            logger = logging.LoggerAdapter(logger, {"rank": rank})
+
     logger.setLevel(level)
     return logger
 

@@ -99,3 +99,8 @@ class BaseAlgorithm:
 
         """
         raise NotImplementedError("update() must be implemented by subclass.")
+
+    @staticmethod
+    def check_episode_termination(infos):
+        """TODO: Add docstring describing the purpose of this method, which is to check for termination signals from the UM and handle any cleanup or checkpoint saving as needed before exiting."""
+        return "final_info" in infos

@@ -90,11 +90,22 @@ class FedRAIN:
                 f"Algorithm '{name}' is not supported by FedRAIN. Please choose a valid RL algorithm (e.g., 'DDPG')."
             )
 
-    def save_weights(self, agent, folder=None, replay_buffer=True):
+    def save_weights(self, agent, folder=None, timestep_offset=-1, replay_buffer=True):
         """Save an agent's weights and optionally its replay buffer to *folder*.
 
         If *folder* is None a temporary directory under `$TMPDIR` (or system
         default tempdir) is created and returned.
+
+        Parameters
+        ----------
+        agent : object
+            Agent instance created by the API (must implement ``save(folder, timestep_offset, replay_buffer)``).
+        folder : str or None, optional
+            Directory where checkpoint files will be written. If ``None`` a temporary directory is created (default is None).
+        timestep_offset : int, optional
+            Offset for the timestep when saving the weights (default is -1). This can be used to adjust the global timestep if saving a checkpoint during training.
+        replay_buffer : bool, optional
+            If True, save the replay buffer as well (default is True).
 
         Returns
         -------
@@ -106,31 +117,38 @@ class FedRAIN:
             folder = tempfile.mkdtemp(prefix="fedrain_ckpt_", dir=base)
         os.makedirs(folder, exist_ok=True)
         if hasattr(agent, "save"):
-            agent.save(folder, replay_buffer=replay_buffer)
+            agent.save(
+                folder, timestep_offset=timestep_offset, replay_buffer=replay_buffer
+            )
         else:
             raise AttributeError(
-                "Provided agent does not implement 'save(folder, replay_buffer)'"
+                "Provided agent does not implement 'save(folder, timestep_offset, replay_buffer)'"
             )
         return folder
 
-    def load_weights(self, agent, folder, replay_buffer=True):
+    def load_weights(self, agent, folder, timestep_offset=1, replay_buffer=True):
         """Load an agent's weights and optionally its replay buffer from *folder*.
 
         Parameters
         ----------
         agent : object
-            Agent instance created by the API (must implement ``load(folder, replay_buffer)``).
+            Agent instance created by the API (must implement ``load(folder, timestep_offset, replay_buffer)``).
         folder : str
             Path to a checkpoint directory previously produced by
             :meth:`save_weights`.
+        timestep_offset : int, optional
+            Offset for the timestep when loading the weights (default is 1).
+            This can be used to adjust the global timestep if resuming from a checkpoint.
         replay_buffer : bool, optional
             If True, load the replay buffer as well (default is True).
         """
         if not os.path.isdir(folder):
             raise ValueError(f"Checkpoint folder does not exist: {folder}")
         if hasattr(agent, "load"):
-            agent.load(folder, replay_buffer=replay_buffer)
+            agent.load(
+                folder, timestep_offset=timestep_offset, replay_buffer=replay_buffer
+            )
         else:
             raise AttributeError(
-                "Provided agent does not implement 'load(folder, replay_buffer)'"
+                "Provided agent does not implement 'load(folder, timestep_offset, replay_buffer)'"
             )

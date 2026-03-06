@@ -16,6 +16,7 @@ import torch.optim as optim
 from stable_baselines3.common.buffers import ReplayBuffer
 
 from fedrain.algorithms.base import BaseAlgorithm
+from fedrain.analysis.recorder import Recorder
 from fedrain.fedrl import FedRL
 from fedrain.utils import setup_logger
 
@@ -197,7 +198,9 @@ class DDPG(BaseAlgorithm):
     fedRLConfig : dict or None, optional
         If provided, configuration dict used to enable federated weight
         exchange via FedRL.
-
+    record_dir : str or None, optional
+        Directory where episodic-return record files are written.  Defaults
+        to the ``$TMPDIR`` environment variable (or ``/tmp`` if unset).
     """
 
     def __init__(
@@ -219,6 +222,7 @@ class DDPG(BaseAlgorithm):
         device="cpu",
         level=logging.DEBUG,
         fedRLConfig=None,
+        record_dir=None,
     ):
         """Initialize the DDPG agent and its components.
 
@@ -230,6 +234,8 @@ class DDPG(BaseAlgorithm):
 
         """
         super().__init__()
+
+        self.name = "DDPG"
 
         self.envs = envs
         self.seed = seed
@@ -246,7 +252,32 @@ class DDPG(BaseAlgorithm):
         self.actor_layer_size = actor_layer_size
         self.critic_layer_size = critic_layer_size
         self.device = device
-        self.logger = setup_logger("DDPG", level)
+        self.logger = setup_logger(self.name, level)
+        self.fedRLConfig = fedRLConfig
+
+        self.algorithm = {
+            "name": self.name.lower(),
+            "learning_rate": self.learning_rate,
+            "buffer_size": int(self.buffer_size),
+            "gamma": self.gamma,
+            "tau": self.tau,
+            "batch_size": self.batch_size,
+            "exploration_noise": self.exploration_noise,
+            "learning_starts": self.learning_starts,
+            "policy_frequency": self.policy_frequency,
+            "noise_clip": self.noise_clip,
+            "actor_layer_size": self.actor_layer_size,
+            "critic_layer_size": self.critic_layer_size,
+            "device": self.device,
+            "seed": int(self.seed),
+        }
+
+        if self.fedRLConfig is not None:
+            self.algorithm["fedRLConfig"] = self.fedRLConfig
+
+        self.recorder = Recorder(
+            algorithm=self.algorithm, record_dir=record_dir, level=level
+        )
 
         self.actor = DDPGActor(self.envs, self.actor_layer_size).to(self.device)
         self.qf1 = DDPGCritic(self.envs, self.critic_layer_size).to(self.device)
@@ -272,7 +303,6 @@ class DDPG(BaseAlgorithm):
             handle_timeout_termination=False,
         )
 
-        self.fedRLConfig = fedRLConfig
         if self.fedRLConfig is not None:
             self.fedRL = FedRL(self.actor, self.fedRLConfig["cid"], self.logger)
             self.fedRL.save_weights(0)
@@ -281,7 +311,7 @@ class DDPG(BaseAlgorithm):
         self.obs, _ = envs.reset(seed=self.seed)
         self.global_step = 1
 
-    def save(self, folder_path, replay_buffer=True):
+    def save(self, folder_path, timestep_offset=-1, replay_buffer=True):
         """Save model weights, optimizers and optionally replay buffer to *folder_path*.
 
         Parameters
@@ -289,7 +319,9 @@ class DDPG(BaseAlgorithm):
         folder_path : str
             Directory where checkpoint files will be written. The directory
             will be created if it does not exist.
-
+        timestep_offset : int, optional
+            Offset for the timestep when saving the weights (default is -1).
+            This can be used to adjust the global timestep if saving a checkpoint during training.
         replay_buffer : bool, optional
             If True, save the replay buffer as well (default is True).
 
@@ -329,14 +361,16 @@ class DDPG(BaseAlgorithm):
                     self.logger.warning(f"Failed to save replay buffer: {e}")
 
         meta = {
-            "global_step": int(self.global_step),
+            "global_step": int(self.global_step) + timestep_offset,
             "seed": int(self.seed),
             "device": str(self.device),
         }
-        with open(os.path.join(folder_path, "metadata.json"), "w") as fh:
-            json.dump(meta, fh)
+        with open(
+            os.path.join(folder_path, "metadata.json"), "w", encoding="utf-8"
+        ) as fh:
+            json.dump(meta, fh, indent=4)
 
-    def load(self, folder_path, replay_buffer=True):
+    def load(self, folder_path, timestep_offset=1, replay_buffer=True):
         """Load model weights, optimizers and optionally replay buffer from *folder_path*.
 
         Parameters
@@ -344,6 +378,9 @@ class DDPG(BaseAlgorithm):
         folder_path : str
             Directory containing checkpoint files previously written by
             :meth:`save`.
+        timestep_offset : int, optional
+            Offset for the timestep when loading the weights (default is 1).
+            This can be used to adjust the global timestep if resuming from a checkpoint.
         replay_buffer : bool, optional
             If True, load the replay buffer as well (default is True).
 
@@ -414,7 +451,9 @@ class DDPG(BaseAlgorithm):
             try:
                 with open(meta_file, "r") as fh:
                     meta = json.load(fh)
-                self.global_step = int(meta.get("global_step", self.global_step))
+                self.global_step = (
+                    int(meta.get("global_step", self.global_step)) + timestep_offset
+                )
                 self.seed = int(meta.get("seed", self.seed))
             except Exception:
                 self.logger.warning("Failed to read metadata.json")
@@ -469,16 +508,20 @@ class DDPG(BaseAlgorithm):
             Additional environment-provided info structures.
 
         """
-        if "final_info" in infos:
-            for info in infos["final_info"]:
+        if self.check_episode_termination(infos):
+            returns_sum = 0
+            for idx, info in enumerate(infos["final_info"]):
                 if self.fedRLConfig:
                     self.logger.debug(
-                        f"seed={self.seed}, cid={self.fedRLConfig['cid']}, global_step={self.global_step}, episodic_return={info['episode']['r']}"
+                        f"idx={idx}, seed={self.seed}, cid={self.fedRLConfig['cid']}, global_step={self.global_step}, episodic_return={info['episode']['r']}"
                     )
                 else:
                     self.logger.debug(
-                        f"seed={self.seed}, global_step={self.global_step}, episodic_return={info['episode']['r']}"
+                        f"idx={idx}, seed={self.seed}, global_step={self.global_step}, episodic_return={info['episode']['r']}"
                     )
+                returns_sum += float(info["episode"]["r"])
+            avg_return = returns_sum / len(infos["final_info"])
+            self.recorder.record_episodic_return(avg_return, self.global_step)
 
         real_next_obs = next_obs.copy()
         for idx, trunc in enumerate(truncations):

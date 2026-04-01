@@ -69,16 +69,16 @@ class FlowerClient(fl.client.NumPyClient):
         if self.REDIS_ADDRESS is None:
             raise EnvironmentError("SSDB environment variable is not set.")
         self.redis = smartredis.Client(address=self.REDIS_ADDRESS, cluster=False)
-        self.logger.debug(f"Connected to Redis server: {self.REDIS_ADDRESS}")
+        self.logger.debug("Connected to Redis server: %s" % self.REDIS_ADDRESS)
 
         is_alive = self.redis.tensor_exists(f"SIGALIVE_S{self.cid}")
-        self.logger.debug(f"is_alive: {is_alive}")
+        self.logger.debug("is_alive: %s" % is_alive)
         if not is_alive:
             try:
                 proc = mp.Process(target=fn, args=(seed, cid))
                 proc.daemon = False
                 proc.start()
-                self.logger.debug(f"Started background process pid={proc.pid}")
+                self.logger.debug("Started background process pid=%s" % proc.pid)
                 self.child_process = proc
             except Exception:
                 self.logger.exception("Failed to start background process")
@@ -164,10 +164,10 @@ class FlowerClient(fl.client.NumPyClient):
             Flower client API.
 
         """
-        # self.logger.debug(f"{config['server_round']} - Setting parameters")
+        # self.logger.debug("%s - Setting parameters" % config['server_round'])
         self.set_parameters(parameters)
 
-        # self.logger.debug(f"{config['server_round']} - Loading parameters")
+        # self.logger.debug("%s - Loading parameters" % config['server_round'])
         updated_parameters = self.get_parameters(config)
 
         return (updated_parameters, self.num_steps, {})

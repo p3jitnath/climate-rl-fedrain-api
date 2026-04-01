@@ -358,7 +358,7 @@ class DDPG(BaseAlgorithm):
                 try:
                     torch.save(self.rb.__dict__, rb_file)
                 except Exception as e:
-                    self.logger.warning(f"Failed to save replay buffer: {e}")
+                    self.logger.warning("Failed to save replay buffer: %s" % e)
 
         meta = {
             "global_step": int(self.global_step) + timestep_offset,
@@ -392,16 +392,22 @@ class DDPG(BaseAlgorithm):
         qf1_target_file = os.path.join(folder_path, "qf1_target.pt")
 
         if os.path.exists(actor_file):
-            self.actor.load_state_dict(torch.load(actor_file, map_location=self.device))
+            self.actor.load_state_dict(
+                torch.load(actor_file, map_location=self.device, weights_only=True)
+            )
         if os.path.exists(qf1_file):
-            self.qf1.load_state_dict(torch.load(qf1_file, map_location=self.device))
+            self.qf1.load_state_dict(
+                torch.load(qf1_file, map_location=self.device, weights_only=True)
+            )
         if os.path.exists(target_actor_file):
             self.target_actor.load_state_dict(
-                torch.load(target_actor_file, map_location=self.device)
+                torch.load(
+                    target_actor_file, map_location=self.device, weights_only=True
+                )
             )
         if os.path.exists(qf1_target_file):
             self.qf1_target.load_state_dict(
-                torch.load(qf1_target_file, map_location=self.device)
+                torch.load(qf1_target_file, map_location=self.device, weights_only=True)
             )
 
         # optimizers
@@ -410,14 +416,16 @@ class DDPG(BaseAlgorithm):
         if os.path.exists(actor_opt_file):
             try:
                 self.actor_optimizer.load_state_dict(
-                    torch.load(actor_opt_file, map_location=self.device)
+                    torch.load(
+                        actor_opt_file, map_location=self.device, weights_only=True
+                    )
                 )
             except Exception:
                 self.logger.warning("Failed to load actor optimizer state")
         if os.path.exists(q_opt_file):
             try:
                 self.q_optimizer.load_state_dict(
-                    torch.load(q_opt_file, map_location=self.device)
+                    torch.load(q_opt_file, map_location=self.device, weights_only=True)
                 )
             except Exception:
                 self.logger.warning("Failed to load critic optimizer state")
@@ -426,7 +434,9 @@ class DDPG(BaseAlgorithm):
         rb_file = os.path.join(folder_path, "replay_buffer.pt")
         if os.path.exists(rb_file) and replay_buffer:
             try:
-                loaded = torch.load(rb_file, map_location=self.device)
+                loaded = torch.load(
+                    rb_file, map_location=self.device, weights_only=True
+                )
                 if isinstance(loaded, ReplayBuffer):
                     self.rb = loaded
                 elif isinstance(loaded, dict):
@@ -443,7 +453,7 @@ class DDPG(BaseAlgorithm):
                     except Exception:
                         self.logger.warning("Loaded replay buffer could not be applied")
             except Exception as e:
-                self.logger.warning(f"Failed to load replay buffer: {e}")
+                self.logger.warning("Failed to load replay buffer: %s" % e)
 
         # metadata
         meta_file = os.path.join(folder_path, "metadata.json")
@@ -519,7 +529,7 @@ class DDPG(BaseAlgorithm):
                     self.logger.debug(
                         f"idx={idx}, seed={self.seed}, global_step={self.global_step}, episodic_return={info['episode']['r']}"
                     )
-                returns_sum += float(info["episode"]["r"])
+                returns_sum += float(info["episode"]["r"][0])
             avg_return = returns_sum / len(infos["final_info"])
             self.recorder.record_episodic_return(avg_return, self.global_step)
 
@@ -578,10 +588,10 @@ class DDPG(BaseAlgorithm):
                 % (self.fedRLConfig["flwr_episodes"] * self.fedRLConfig["num_steps"])
                 == 0
             ):
-                # self.logger.debug(f"{self.seed} - Saving local weights")
+                # self.logger.debug("%s - Saving local weights" % self.seed)
                 self.fedRL.save_weights(self.global_step)
 
-                # self.logger.debug(f"{self.seed} - Loading global weights")
+                # self.logger.debug("%s - Loading global weights" % self.seed)
                 self.fedRL.load_weights(self.global_step)
 
         self.global_step += 1

@@ -48,7 +48,7 @@ class Recorder:
         config_path = os.path.join(self.record_dir, "algorithm_config.json")
         with open(config_path, "w", encoding="utf-8") as f:
             json.dump(self.algorithm, f, indent=4)
-        self.logger.info(f"Recorded algorithm configuration to {config_path}")
+        self.logger.info("Recorded algorithm configuration to %s" % config_path)
 
     def record_episodic_return(self, episodic_return, global_step, idx=None):
         """Append a row (algorithm, global_step, episodic_return) to the CSV.

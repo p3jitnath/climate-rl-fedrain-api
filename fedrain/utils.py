@@ -37,6 +37,23 @@ import psutil
 import torch
 
 
+class RankFilter(logging.Filter):
+    """Add rank information to log records for distributed logging.
+
+    This filter ensures that the 'rank' field is always present in log records,
+    even when logging happens outside of a LoggerAdapter context.
+    """
+
+    def __init__(self, rank=0):
+        super().__init__()
+        self.rank = rank
+
+    def filter(self, record):
+        if not hasattr(record, "rank"):
+            record.rank = self.rank
+        return True
+
+
 def setup_logger(name, level=logging.INFO, only_rank0=True):
     """Create or return a configured logger.
 
@@ -76,11 +93,16 @@ def setup_logger(name, level=logging.INFO, only_rank0=True):
             "[%(rank)03d, %(levelname)-5s] %(name)s: %(message)s"
         )
 
+        # Add RankFilter to ensure 'rank' field is always present
+        rank_filter = RankFilter(rank)
+        logger.addFilter(rank_filter)
+
         if only_rank0 and rank != 0:
             logger.addHandler(logging.NullHandler())
         else:
             handler = logging.StreamHandler(sys.stdout)
             handler.setFormatter(formatter)
+            handler.addFilter(rank_filter)
             logger.addHandler(handler)
             logger = logging.LoggerAdapter(logger, {"rank": rank})
 

@@ -111,12 +111,12 @@ class EBM:
                 """
                 logger = setup_logger("DATASET", logging.DEBUG)
                 if not os.path.exists(filepath):
-                    logger.debug(f"Downloading {dataset_name} data ...")
+                    logger.debug("Downloading %s data ..." % dataset_name)
                     dataset = xr.open_dataset(url, decode_times=False)
                     dataset.to_netcdf(filepath, format="NETCDF3_64BIT")
-                    logger.debug(f"{dataset_name} data saved to {filepath}")
+                    logger.debug("%s data saved to %s" % (dataset_name, filepath))
                 else:
-                    logger.debug(f"Loading {dataset_name} data ...")
+                    logger.debug("Loading %s data ..." % dataset_name)
                     dataset = xr.open_dataset(
                         filepath,
                         decode_times=xr.coders.CFDatetimeCoder(use_cftime=True),
@@ -315,8 +315,8 @@ class EnergyBalanceModelEnv(gym.Env):
         self.cid = cid
 
         self.logger = setup_logger(f"EBM SUB {self.cid}", level)
-        self.logger.debug(f"Environment ID: {self.cid}")
-        self.logger.debug(f"Number of clients: {NUM_CLIENTS}")
+        self.logger.debug("Environment ID: %s" % self.cid)
+        self.logger.debug("Number of clients: %s" % NUM_CLIENTS)
 
         self.D = 0.6
         self.min_D = 0.55
@@ -381,7 +381,7 @@ class EnergyBalanceModelEnv(gym.Env):
         if self.REDIS_ADDRESS is None:
             raise EnvironmentError("SSDB environment variable is not set.")
         self.redis = Client(address=self.REDIS_ADDRESS, cluster=False)
-        self.logger.debug(f"Connected to Redis server: {self.REDIS_ADDRESS}")
+        self.logger.debug("Connected to Redis server: %s" % self.REDIS_ADDRESS)
 
         self.redis.put_tensor(f"SIGALIVE_S{self.cid}", np.array([1], dtype=np.int32))
 

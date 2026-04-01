@@ -63,7 +63,7 @@ def test_ddpg_save_and_load(ckpt_path):
     next_obs, rewards, terminations, truncations, infos = envs.step(actions)
     agent.update(actions, next_obs, rewards, terminations, truncations, infos)
 
-    ckpt_path_str = api.save_weights(agent, folder=str(ckpt_path))
+    ckpt_path_str = api.save_weights(agent, folder=str(ckpt_path), timestep_offset=0)
     assert os.path.isdir(ckpt_path_str)
     assert os.path.exists(os.path.join(ckpt_path_str, "actor.pt"))
     assert os.path.exists(os.path.join(ckpt_path_str, "replay_buffer.pt"))
@@ -71,7 +71,7 @@ def test_ddpg_save_and_load(ckpt_path):
 
     # create a fresh agent and load
     agent2 = api.set_algorithm("DDPG", envs=envs, seed=SEED, **params)
-    api.load_weights(agent2, ckpt_path_str)
+    api.load_weights(agent2, ckpt_path_str, timestep_offset=0)
 
     # actor parameters should match after load
     for p1, p2 in zip(agent.actor.parameters(), agent2.actor.parameters()):
@@ -80,5 +80,5 @@ def test_ddpg_save_and_load(ckpt_path):
     # metadata should have been restored
     with open(os.path.join(ckpt_path_str, "metadata.json"), "r") as fh:
         meta = json.load(fh)
-    assert int(meta.get("seed", -1)) == SEED
-    assert int(meta.get("global_step", -1)) == agent.global_step
+    assert int(meta.get("seed")) == SEED
+    assert int(meta.get("global_step")) == agent.global_step

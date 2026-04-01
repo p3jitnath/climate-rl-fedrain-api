@@ -109,7 +109,7 @@ class SimpleClimateBiasCorrectionEnv(gym.Env):
         if self.REDIS_ADDRESS is None:
             raise EnvironmentError("SSDB environment variable is not set.")
         self.redis = Client(address=self.REDIS_ADDRESS, cluster=False)
-        self.logger.debug(f"Connected to Redis server: {self.REDIS_ADDRESS}")
+        self.logger.debug("Connected to Redis server: %s" % self.REDIS_ADDRESS)
 
         self.redis.put_tensor(f"SIGALIVE_S{self.cid}", np.array([1], dtype=np.int32))
 

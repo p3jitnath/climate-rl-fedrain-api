@@ -143,8 +143,8 @@ class EnergyBalanceModelEnv(gym.Env):
 
         self.logger = setup_logger(f"EBM {self.cid}", level)
 
-        self.logger.debug(f"Environment ID: {self.cid}")
-        self.logger.debug(f"Number of clients: {NUM_CLIENTS}")
+        self.logger.debug("Environment ID: %s" % self.cid)
+        self.logger.debug("Number of clients: %s" % NUM_CLIENTS)
 
         self.min_D = 0.55
         self.max_D = 0.65
@@ -203,7 +203,7 @@ class EnergyBalanceModelEnv(gym.Env):
         if self.REDIS_ADDRESS is None:
             raise EnvironmentError("SSDB environment variable is not set.")
         self.redis = Client(address=self.REDIS_ADDRESS, cluster=False)
-        self.logger.debug(f"Connected to Redis server: {self.REDIS_ADDRESS}")
+        self.logger.debug("Connected to Redis server: %s" % self.REDIS_ADDRESS)
 
         self.redis.put_tensor(f"SIGALIVE_S{self.cid}", np.array([1], dtype=np.int32))
 

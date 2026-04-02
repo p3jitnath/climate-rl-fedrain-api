@@ -85,7 +85,7 @@ def run_ebm_subprocess(seed, cid):
 
     api = FedRAIN()
     agent = api.set_algorithm(
-        "DDPG", envs=envs, seed=SEED, **params, level=logging.DEBUG
+        "DDPG", envs=envs, seed=SEED, **params, level=logging.DEBUG, device="cpu"
     )
 
     obs, _ = envs.reset()

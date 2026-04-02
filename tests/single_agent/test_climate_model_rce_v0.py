@@ -1,8 +1,8 @@
-"""Single-agent integration test for the SCBC v1 F90 climate model.
+"""Single-agent integration test for RCE v0 climate model.
 
-This test runs a small, deterministic agent-environment loop using the
-``SimpleClimateBiasCorrectionEnv`` and compares the final episodic
-return against a precomputed value stored in TFRecord test artifacts.
+This test runs a deterministic DDPG rollout on the RCE v0 environment and
+compares the final episodic return to a precomputed expected value stored
+in TFRecord test artifacts.
 """
 
 import glob
@@ -11,25 +11,25 @@ import logging
 import gymnasium as gym
 import numpy as np
 
-from examples.climate_models.scbc_v1 import SimpleClimateBiasCorrectionEnv
+from examples.climate_models.rce_v0 import RadiativeConvectiveModelEnv
 from fedrain.api import FedRAIN
 from fedrain.utils import make_env, set_seed
 from tests.utils import retrieve_tfrecord_data
 
 EPISODES = 10
-NUM_STEPS = 200
+NUM_STEPS = 500
 TOTAL_TIMESTEPS = NUM_STEPS * EPISODES
 
-EXP_ID = "scbc-v1-optim-L-60k"
+EXP_ID = "rce-v0-optim-L-10k"
 SEED = 1
 
 CONFIG = {
-    "learning_rate": 0.0048074617438304285,
-    "tau": 0.07190186679765906,
+    "learning_rate": 0.0011491836079784074,
+    "tau": 0.040946204090343157,
     "batch_size": 128,
-    "exploration_noise": 0.10051077287134728,
-    "policy_frequency": 4,
-    "noise_clip": 0.1,
+    "exploration_noise": 0.1362835031619251,
+    "policy_frequency": 3,
+    "noise_clip": 0.9,
     "actor_critic_layer_size": 64,
 }
 
@@ -38,18 +38,17 @@ test_data = retrieve_tfrecord_data(
 )
 
 
-def test_scbc_episodic_return_matches_expected():
-    """Run the SCBC v1 loop and assert the last episodic return equals expected.
+def test_rce_v0_episodic_return_matches_expected():
+    """Run the RCE v0 loop and assert the last episodic return equals expected.
 
-    The test seeds RNGs to ensure determinism, constructs a vectorized
-    environment thunk, instantiates a DDPG agent via the public API, and
-    runs the action-update loop for a fixed number of timesteps. The last
-    recorded episodic return is compared against the expected value from
+    The test sets RNG seeds to ensure determinism and runs the DDPG
+    agent-environment interaction for a fixed number of timesteps. It then
+    compares the recorded final episodic return with the expected value from
     the TFRecord data.
     """
     set_seed(SEED)
     envs = gym.vector.SyncVectorEnv(
-        [make_env(SimpleClimateBiasCorrectionEnv, SEED, NUM_STEPS)]
+        [make_env(RadiativeConvectiveModelEnv, SEED, NUM_STEPS)]
     )
 
     params = CONFIG.copy()
@@ -70,9 +69,9 @@ def test_scbc_episodic_return_matches_expected():
 
         if "final_info" in infos:
             for info in infos["final_info"]:
-                episode_return = info["episode"]["r"][0]
+                episode_return = info["episode"]["r"]
                 if episode_return is not None:
-                    episodic_returns.append(episode_return)
+                    episodic_returns.append(episode_return[0])
                 break
 
         obs = next_obs

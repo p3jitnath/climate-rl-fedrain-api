@@ -18,7 +18,12 @@ from stable_baselines3.common.buffers import ReplayBuffer
 from fedrain.algorithms.base import BaseAlgorithm
 from fedrain.analysis.recorder import Recorder
 from fedrain.fedrl import FedRL
-from fedrain.utils import setup_logger
+from fedrain.utils import (
+    detect_device,
+    setup_logger,
+    state_dict_to_cpu,
+    to_cpu_recursive,
+)
 
 
 class DDPGActor(nn.Module):
@@ -201,6 +206,9 @@ class DDPG(BaseAlgorithm):
     record_dir : str or None, optional
         Directory where episodic-return record files are written.  Defaults
         to the ``$TMPDIR`` environment variable (or ``/tmp`` if unset).
+    train : bool, optional
+        If True, the agent will perform training updates in the ``update``
+        method. If False, the agent will only collect experience without updating the networks.
     """
 
     def __init__(
@@ -219,10 +227,11 @@ class DDPG(BaseAlgorithm):
         noise_clip=0.5,
         actor_layer_size=256,
         critic_layer_size=256,
-        device="cpu",
+        device="auto",
         level=logging.DEBUG,
         fedRLConfig=None,
         record_dir=None,
+        train=True,
     ):
         """Initialize the DDPG agent and its components.
 
@@ -251,9 +260,10 @@ class DDPG(BaseAlgorithm):
         self.noise_clip = noise_clip
         self.actor_layer_size = actor_layer_size
         self.critic_layer_size = critic_layer_size
-        self.device = device
+        self.device = detect_device(device)
         self.logger = setup_logger(self.name, level)
         self.fedRLConfig = fedRLConfig
+        self.train = train
 
         self.algorithm = {
             "name": self.name.lower(),
@@ -270,7 +280,10 @@ class DDPG(BaseAlgorithm):
             "critic_layer_size": self.critic_layer_size,
             "device": self.device,
             "seed": int(self.seed),
+            "train": self.train,
         }
+
+        self.logger.info("Device: %s", self.device)
 
         if self.fedRLConfig is not None:
             self.algorithm["fedRLConfig"] = self.fedRLConfig
@@ -336,29 +349,38 @@ class DDPG(BaseAlgorithm):
         """
         os.makedirs(folder_path, exist_ok=True)
 
-        torch.save(self.actor.state_dict(), os.path.join(folder_path, "actor.pt"))
-        torch.save(self.qf1.state_dict(), os.path.join(folder_path, "qf1.pt"))
         torch.save(
-            self.target_actor.state_dict(), os.path.join(folder_path, "target_actor.pt")
+            state_dict_to_cpu(self.actor.state_dict()),
+            os.path.join(folder_path, "actor.pt"),
         )
         torch.save(
-            self.qf1_target.state_dict(), os.path.join(folder_path, "qf1_target.pt")
+            state_dict_to_cpu(self.qf1.state_dict()),
+            os.path.join(folder_path, "qf1.pt"),
+        )
+        torch.save(
+            state_dict_to_cpu(self.target_actor.state_dict()),
+            os.path.join(folder_path, "target_actor.pt"),
+        )
+        torch.save(
+            state_dict_to_cpu(self.qf1_target.state_dict()),
+            os.path.join(folder_path, "qf1_target.pt"),
         )
 
         torch.save(
-            self.actor_optimizer.state_dict(), os.path.join(folder_path, "actor_opt.pt")
+            state_dict_to_cpu(self.actor_optimizer.state_dict()),
+            os.path.join(folder_path, "actor_opt.pt"),
         )
-        torch.save(self.q_optimizer.state_dict(), os.path.join(folder_path, "q_opt.pt"))
+        torch.save(
+            state_dict_to_cpu(self.q_optimizer.state_dict()),
+            os.path.join(folder_path, "q_opt.pt"),
+        )
 
         if replay_buffer:
             rb_file = os.path.join(folder_path, "replay_buffer.pt")
             try:
-                torch.save(self.rb, rb_file)
-            except Exception:
-                try:
-                    torch.save(self.rb.__dict__, rb_file)
-                except Exception as e:
-                    self.logger.warning("Failed to save replay buffer: %s" % e)
+                torch.save(to_cpu_recursive(self.rb.__dict__), rb_file)
+            except Exception as e:
+                self.logger.warning("Failed to save replay buffer: %s" % e)
 
         meta = {
             "global_step": int(self.global_step) + timestep_offset,
@@ -385,6 +407,21 @@ class DDPG(BaseAlgorithm):
             If True, load the replay buffer as well (default is True).
 
         """
+        meta = {}
+        meta_file = os.path.join(folder_path, "metadata.json")
+        if os.path.exists(meta_file):
+            try:
+                with open(meta_file, "r", encoding="utf-8") as fh:
+                    meta = json.load(fh)
+            except Exception:
+                self.logger.warning("Failed to read metadata.json")
+
+        # Resolve and apply runtime device before loading state from disk.
+        self.actor.to(self.device)
+        self.qf1.to(self.device)
+        self.target_actor.to(self.device)
+        self.qf1_target.to(self.device)
+
         # models
         actor_file = os.path.join(folder_path, "actor.pt")
         qf1_file = os.path.join(folder_path, "qf1.pt")
@@ -430,6 +467,12 @@ class DDPG(BaseAlgorithm):
             except Exception:
                 self.logger.warning("Failed to load critic optimizer state")
 
+        for optimizer in (self.actor_optimizer, self.q_optimizer):
+            for state in optimizer.state.values():
+                for key, value in state.items():
+                    if torch.is_tensor(value):
+                        state[key] = value.to(self.device)
+
         # replay buffer
         rb_file = os.path.join(folder_path, "replay_buffer.pt")
         if os.path.exists(rb_file) and replay_buffer:
@@ -455,12 +498,12 @@ class DDPG(BaseAlgorithm):
             except Exception as e:
                 self.logger.warning("Failed to load replay buffer: %s" % e)
 
+        if hasattr(self.rb, "device"):
+            self.rb.device = self.device
+
         # metadata
-        meta_file = os.path.join(folder_path, "metadata.json")
-        if os.path.exists(meta_file):
+        if meta:
             try:
-                with open(meta_file, "r") as fh:
-                    meta = json.load(fh)
                 self.global_step = (
                     int(meta.get("global_step", self.global_step)) + timestep_offset
                 )
@@ -476,7 +519,7 @@ class DDPG(BaseAlgorithm):
         action space. Otherwise the actor network is used with added
         exploration noise.
         """
-        if self.global_step < self.learning_starts:
+        if self.train and self.global_step < self.learning_starts:
             actions = np.array(
                 [
                     self.envs.single_action_space.sample()
@@ -499,7 +542,15 @@ class DDPG(BaseAlgorithm):
                 )
         return actions
 
-    def update(self, actions, next_obs, rewards, terminations, truncations, infos):
+    def update(
+        self,
+        actions,
+        next_obs,
+        rewards,
+        terminations,
+        truncations,
+        infos,
+    ):
         """Perform a training update using data from the replay buffer.
 
         Parameters
@@ -516,7 +567,6 @@ class DDPG(BaseAlgorithm):
             Truncation flags for episodes.
         infos : dict
             Additional environment-provided info structures.
-
         """
         if self.check_episode_termination(infos):
             returns_sum = 0
@@ -541,7 +591,7 @@ class DDPG(BaseAlgorithm):
 
         self.obs = next_obs
 
-        if self.global_step > self.learning_starts:
+        if self.train and self.global_step > self.learning_starts:
 
             data = self.rb.sample(self.batch_size)
             with torch.no_grad():
@@ -582,7 +632,7 @@ class DDPG(BaseAlgorithm):
                         self.tau * param.data + (1 - self.tau) * target_param.data
                     )
 
-        if self.fedRLConfig is not None and "final_info" in infos:
+        if self.train and self.fedRLConfig is not None and "final_info" in infos:
             if (
                 self.global_step
                 % (self.fedRLConfig["flwr_episodes"] * self.fedRLConfig["num_steps"])

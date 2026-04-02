@@ -41,6 +41,7 @@ dependencies:
   - cached-property=1.5.2
   - cached_property=1.5.2
   - cairo=1.18.4
+  - cartopy=0.25.0
   - certifi=2026.2.25
   - cffi=2.0.0
   - cftime=1.6.5
@@ -76,6 +77,8 @@ dependencies:
   - farama-notifications=0.0.4
   - filelock=3.25.2
   - flatbuffers=24.3.25
+  - flexcache=0.3
+  - flexparser=0.4
   - fluidsynth=2.5.3
   - flwr=1.14.0
   - font-ttf-dejavu-sans-mono=2.37
@@ -90,6 +93,7 @@ dependencies:
   - frozenlist=1.8.0
   - future=1.0.0
   - gast=0.7.0
+  - geos=3.14.1
   - gflags=2.2.2
   - giflib=5.2.2
   - glog=0.7.1
@@ -228,6 +232,7 @@ dependencies:
   - matplotlib=3.9.4
   - matplotlib-base=3.9.4
   - mdurl=0.1.2
+  - metpy=1.7.1
   - ml_dtypes=0.4.0
   - mpg123=1.32.9
   - msgpack-python=1.1.2
@@ -252,6 +257,7 @@ dependencies:
   - pathspec=0.12.1
   - pcre2=10.47
   - pillow=12.1.1
+  - pint=0.25.3
   - pip=26.0.1
   - pixman=0.46.4
   - platformdirs=4.9.4
@@ -259,6 +265,7 @@ dependencies:
   - pooch=1.9.0
   - portaudio=19.7.0
   - portmidi=2.0.8
+  - proj=9.8.0
   - prometheus_client=0.24.1
   - propcache=0.4.1
   - proto-plus=1.27.1
@@ -276,6 +283,8 @@ dependencies:
   - pygments=2.20.0
   - pyopenssl=25.1.0
   - pyparsing=3.3.2
+  - pyproj=3.7.2
+  - pyshp=3.0.3
   - pyside6=6.10.1
   - pysocks=1.7.1
   - pytest=8.4.2
@@ -313,10 +322,12 @@ dependencies:
   - sdl3=3.4.2
   - setproctitle=1.2.2
   - setuptools=82.0.1
+  - shapely=2.1.2
   - shellingham=1.5.4
   - six=1.17.0
   - smart_open=7.5.1
   - snappy=1.2.2
+  - sqlite=3.52.0
   - svt-av1=4.0.1
   - tensorboard=2.17.1
   - tensorboard-data-server=0.7.0
@@ -324,11 +335,13 @@ dependencies:
   - tensorflow=2.17.0
   - tensorflow-base=2.17.0
   - tensorflow-estimator=2.17.0
+  - tephi=0.3.0
   - termcolor=3.3.0
   - tk=8.6.13
   - tomli=2.4.1
   - tomli-w=1.2.0
   - tornado=6.5.5
+  - traitlets=5.14.3
   - trove-classifiers=2026.1.14.14
   - typer=0.12.5
   - typer-slim=0.12.5

@@ -55,7 +55,7 @@ def test_ebm_v1_episodic_return_matches_expected():
 
     api = FedRAIN()
     agent = api.set_algorithm(
-        "DDPG", envs=envs, seed=SEED, **params, level=logging.DEBUG
+        "DDPG", envs=envs, seed=SEED, **params, level=logging.INFO, device="cpu"
     )
 
     obs, _ = envs.reset()

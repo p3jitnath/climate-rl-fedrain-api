@@ -5,19 +5,6 @@ codebase such as logging setup, environment factory creation, seeding of
 random number generators, and a lightweight Redis server manager used for
 local simulations.
 
-Functions
----------
-setup_logger
-    Create or retrieve a configured :class:`logging.Logger` instance.
-make_env
-    Return a thunk that creates a wrapped Gym environment instance.
-set_seed
-    Seed Python, NumPy and PyTorch RNGs for reproducibility.
-
-Classes
--------
-RedisServer
-    Manage a local redis-server process used for development/testing.
 """
 
 import logging
@@ -225,10 +212,13 @@ def get_urandom_redis_port():
     - Chooses a base port uniformly at random from 12581 to 24580 (inclusive).
     - Adds (hrand % 1000) to the base port to produce the final port.
 
-    Returns:
-        int: A candidate port number in the inclusive range 12581..25579.
+    Returns
+    -------
+    redis_port : int
+        A candidate port number in the inclusive range 12581..25579.
 
-    Notes:
+    Notes
+    -------
         - The function does not check whether the returned port is available; callers
           must verify and handle port collisions.
         - The final distribution is not purely uniform due to the additive modulo step.
@@ -248,10 +238,12 @@ def get_ssdb_redis_port():
     Reads the SSDB environment variable, which is expected to be either a port
     ("6379") or a host:port string ("hostname:6379"), and returns the port as an int.
 
-    Returns:
+    Returns
+    -------
         int: Redis port number.
 
-    Raises:
+    Raises
+    ------
         EnvironmentError: If the SSDB environment variable is not set.
     """
     redis_port = os.getenv("SSDB")
@@ -361,3 +353,80 @@ class RedisServer:
         """Stop the managed redis-server and clear the internal handle."""
         self._shutdown_redis_server(self.redis_proc)
         self.redis_proc = None
+
+
+def detect_device(device="auto"):
+    """
+    Detect the available device for PyTorch.
+
+    Parameters
+    ----------
+    device : str
+        The device to use. If "auto", the function will automatically detect the available device.
+
+    Returns
+    -------
+    str
+        "cuda" if a CUDA compatible GPU is available, "xpu" if a INTEL GPU is available else "cpu".
+    """
+    if device == "auto":
+        if torch.cuda.is_available():
+            return "cuda"
+        elif torch.xpu.is_available():
+            return "xpu"
+        else:
+            return "cpu"
+    else:
+        return device
+
+
+def to_cpu_recursive(obj):
+    """
+    Recursively move torch tensors in a Python container to CPU.
+
+    This helper is intended for checkpoint serialization where tensors may
+    live on CUDA/XPU devices at runtime, but should be saved in a portable
+    CPU form.
+
+    Parameters
+    ----------
+    obj : any
+        Arbitrary object that may contain tensors directly or inside nested
+        dict/list/tuple structures.
+
+    Returns
+    -------
+    any
+        A structure with the same shape as ``obj`` where all torch tensors are
+        detached and moved to CPU. Non-container, non-tensor objects are
+        returned unchanged.
+
+    """
+    if torch.is_tensor(obj):
+        return obj.detach().cpu()
+    if isinstance(obj, dict):
+        return {k: to_cpu_recursive(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [to_cpu_recursive(v) for v in obj]
+    if isinstance(obj, tuple):
+        return tuple(to_cpu_recursive(v) for v in obj)
+    return obj
+
+
+def state_dict_to_cpu(state_dict):
+    """
+    Return a CPU-safe copy of a torch ``state_dict``.
+
+    Parameters
+    ----------
+    state_dict : dict
+        State dictionary returned by ``nn.Module.state_dict()`` or
+        ``Optimizer.state_dict()``.
+
+    Returns
+    -------
+    dict
+        State dictionary with all tensor values moved to CPU recursively.
+
+    """
+    return to_cpu_recursive(state_dict)

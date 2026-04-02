@@ -100,7 +100,34 @@ class BaseAlgorithm:
         """
         raise NotImplementedError("update() must be implemented by subclass.")
 
+    def inference(self):
+        """Perform inference using the algorithm.
+
+        This method can be called to switch the algorithm into inference mode.
+        which may involve setting internal flags or adjusting behavior to disable training-specific features (such as exploration noise or gradient updates). The exact behavior of this method depends on the concrete implementation in subclasses.
+        """
+        self.train = False
+        self.algorithm["train"] = False
+        self.logger.info("Switched to inference mode")
+
     @staticmethod
     def check_episode_termination(infos):
-        """TODO: Add docstring describing the purpose of this method, which is to check for termination signals from the UM and handle any cleanup or checkpoint saving as needed before exiting."""
+        """Check for episode termination signals from the environment.
+
+        This method inspects the provided ``infos`` dictionary for termination
+        signals (e.g., ``final_info``) and can be used to handle any cleanup
+        or checkpoint saving before exiting.
+
+        Parameters
+        ----------
+        infos : dict
+            Dictionary containing environment information, typically returned
+            by the environment's ``step`` method.
+
+        Returns
+        -------
+        bool
+            True if the episode has terminated, False otherwise.
+
+        """
         return "final_info" in infos

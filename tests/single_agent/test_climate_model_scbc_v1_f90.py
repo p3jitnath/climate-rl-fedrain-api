@@ -42,7 +42,7 @@ test_data = retrieve_tfrecord_data(
 
 
 def test_scbc_episodic_return_matches_expected():
-    """Run the environment loop and assert the final episodic return.
+    """Run the SCBC v1 F90 environment loop and assert the final episodic return.
 
     The test seeds RNGs to ensure determinism, constructs a vectorized
     environment thunk, instantiates a DDPG agent via the public API, and
@@ -72,7 +72,7 @@ def test_scbc_episodic_return_matches_expected():
 
     api = FedRAIN()
     agent = api.set_algorithm(
-        "DDPG", envs=envs, seed=SEED, **params, level=logging.INFO
+        "DDPG", envs=envs, seed=SEED, **params, level=logging.INFO, device="cpu"
     )
 
     obs, _ = envs.reset()

@@ -569,7 +569,7 @@ class DDPG(BaseAlgorithm):
             Additional environment-provided info structures.
         """
         if self.check_episode_termination(infos):
-            returns_sum = 0
+            returns = []
             for idx, info in enumerate(infos["final_info"]):
                 if self.fedRLConfig:
                     self.logger.debug(
@@ -579,15 +579,18 @@ class DDPG(BaseAlgorithm):
                     self.logger.debug(
                         f"idx={idx}, seed={self.seed}, global_step={self.global_step}, episodic_return={info['episode']['r']}"
                     )
-                returns_sum += float(info["episode"]["r"][0])
-            avg_return = returns_sum / len(infos["final_info"])
+                returns.append(float(info["episode"]["r"][0]))
+            returns = np.array(returns)
+            avg_return = np.mean(returns)
             self.recorder.record_episodic_return(avg_return, self.global_step)
+            self.recorder.sr.save(self.global_step, self.actor, returns)
 
         real_next_obs = next_obs.copy()
         for idx, trunc in enumerate(truncations):
             if trunc:
                 real_next_obs[idx] = infos["final_observation"][idx]
         self.rb.add(self.obs, real_next_obs, actions, rewards, terminations, infos)
+        self.recorder.sr.add(self.global_step, self.obs, next_obs, actions, rewards)
 
         self.obs = next_obs
 

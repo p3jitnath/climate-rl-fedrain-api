@@ -163,7 +163,7 @@ If you extend the library (e.g., new algorithms or FedRL modes), update this REA
 
 ## **Citations**
 
-- Nath P, Schemm S, Moss H, Haynes P, Shuckburgh E, Webb M. FedRAIN-Lite: Federated reinforcement algorithms for improving idealised numerical weather and climate models. 2025 NeurIPS workshop on Tackling Climate Change with Machine Learning; 2025. arXiv:2508.14315 [cs]. Available from: https://arxiv.org/abs/2508.14315
+- Nath P, Schemm S, Moss H, Haynes P, Shuckburgh E, Webb M. FedRAIN-Lite: Federated reinforcement algorithms for improving idealised numerical weather and climate models. 2026 EGU General Assembly (Oral); 2026. EGU26-351 (ITS1.7/CL0.3). Available from: https://arxiv.org/abs/2508.14315
 - Nath P, Moss H, Shuckburgh E, Webb M. RAIN: Reinforcement algorithms for improving numerical weather and climate models. 2025 EGU General Assembly (Oral); 2025. EGU25-5159 (ITS1.4/CL0.10). Available from: http://arxiv.org/abs/2408.16118
 
 ---

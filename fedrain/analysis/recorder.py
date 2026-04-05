@@ -10,11 +10,92 @@ import json
 import logging
 import os
 
+import numpy as np
+import torch
+
 from fedrain.utils import setup_logger
 
 
+class StepRecorder:
+    """Recorder for step data (observations, actions, rewards) during training.
+
+    This class accumulates step data in memory and saves it to a file when
+    requested. It can be used to record detailed step information for debugging
+    or analysis purposes.
+
+    Parameters
+    ----------
+    record_dir : str
+        Directory where step data files will be saved. Each file will be named with the global step number (e.g., "step_1000.pth").
+    """
+
+    def __init__(self, record_dir):
+        self.record_dir = record_dir
+        self.reset()
+
+    def _clear(self):
+        """Clear accumulated step data."""
+        self.global_steps = []
+        self.obs = []
+        self.next_obs = []
+        self.actions = []
+        self.rewards = []
+
+    def reset(self):
+        """Reset step data by clearing all accumulated values."""
+        self._clear()
+
+    def add(self, global_step, obs, next_obs, actions, rewards):
+        """Add step data to the recorder.
+
+        Parameters
+        ----------
+        global_step : int
+            Global step number.
+        obs : array-like
+            Observation data.
+        next_obs : array-like
+            Next observation data.
+        actions : array-like
+            Action data.
+        rewards : array-like
+            Reward data.
+        """
+        self.global_steps.append(global_step)
+        self.obs.append(obs)
+        self.next_obs.append(next_obs)
+        self.actions.append(actions)
+        self.rewards.append(rewards)
+
+    def save(self, global_step, actor, episodic_return):
+        """Save accumulated step data to a file.
+
+        Parameters
+        ----------
+        global_step : int
+            Global step number.
+        actor : torch.nn.Module
+            Actor network model.
+        episodic_return : float
+            Episodic return value.
+        """
+        torch.save(
+            {
+                "global_steps": np.array(self.global_steps).squeeze(),
+                "obs": np.array(self.obs).squeeze(),
+                "next_obs": np.array(self.next_obs).squeeze(),
+                "actions": np.array(self.actions).squeeze(),
+                "rewards": np.array(self.rewards).squeeze(),
+                "actor": actor.state_dict(),
+                "episodic_return": episodic_return,
+            },
+            f"{self.record_dir}/step_{global_step}.pth",
+        )
+        self.reset()
+
+
 class Recorder:
-    """Append episodic-return rows to a CSV file.
+    """Append episodic-return rows to a CSV file and record step data.
 
     Parameters
     ----------
@@ -32,8 +113,9 @@ class Recorder:
     def __init__(self, algorithm, record_dir=None, level=logging.DEBUG):
         self._file_path = None
         self.algorithm = algorithm
-        self.record_dir = os.path.join(record_dir or os.environ.get("TMPDIR", "/tmp"))
-        self.record_dir = os.path.join(self.record_dir, "records")
+        self.record_dir = os.path.join(
+            record_dir or os.environ.get("TMPDIR", "/tmp/climaterl/records")
+        )
         os.makedirs(self.record_dir, exist_ok=True)
 
         self.logger = setup_logger("recorder", level=level)
@@ -41,6 +123,8 @@ class Recorder:
             f"Initialised recorder for algorithm '{self.algorithm['name']}' in directory: {self.record_dir}"
         )
 
+        self.sr = StepRecorder(self.record_dir)
+        self.sr.reset()
         self.record_algorithm()
 
     def record_algorithm(self):

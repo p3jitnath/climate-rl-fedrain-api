@@ -478,7 +478,7 @@ class DDPG(BaseAlgorithm):
         if os.path.exists(rb_file) and replay_buffer:
             try:
                 loaded = torch.load(
-                    rb_file, map_location=self.device, weights_only=True
+                    rb_file, map_location=self.device, weights_only=False
                 )
                 if isinstance(loaded, ReplayBuffer):
                     self.rb = loaded

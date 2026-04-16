@@ -23,7 +23,7 @@ title: "Replacing Tunable Parameters in Weather and Climate Models with State-De
 version: 1.0.0
 doi: 10.48550/arXiv.2601.04268
 date-released: 2026-04-08
-url: "https://github.com/p3jitnath/climate-rl-cc"
+url: "https://github.com/p3jitnath/climate-rl-fedrain-api"
 preferred-citation:
   type: article
   authors:

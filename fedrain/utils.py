@@ -23,6 +23,7 @@ import gymnasium as gym
 import numpy as np
 import psutil
 import torch
+from mpi4py import MPI
 
 
 class RankFilter(logging.Filter):
@@ -42,7 +43,7 @@ class RankFilter(logging.Filter):
         return True
 
 
-def setup_logger(name, level=logging.INFO, only_rank0=True):
+def setup_logger(name, level=logging.INFO):
     """Create or return a configured logger.
 
     This helper creates a :class:`logging.Logger` with a stdout stream
@@ -56,9 +57,6 @@ def setup_logger(name, level=logging.INFO, only_rank0=True):
         Name of the logger.
     level : int, optional
         Logging level to apply to the logger (default: ``logging.INFO``).
-    only_rank0 : bool, optional
-        If True, the logger will output to stdout on rank 0 and be silent on
-        other ranks. If False, the logger will output to stdout on all ranks (default: True).
 
     Returns
     -------
@@ -67,12 +65,11 @@ def setup_logger(name, level=logging.INFO, only_rank0=True):
 
     """
     logger = logging.getLogger(name)
+
     if not logger.hasHandlers():
 
         # try to detect MPI rank; if unavailable assume rank 0.
         try:
-            from mpi4py import MPI
-
             rank = MPI.COMM_WORLD.Get_rank()
         except Exception:
             rank = 0
@@ -85,7 +82,7 @@ def setup_logger(name, level=logging.INFO, only_rank0=True):
         rank_filter = RankFilter(rank)
         logger.addFilter(rank_filter)
 
-        if only_rank0 and rank != 0:
+        if rank != 0:
             logger.addHandler(logging.NullHandler())
         else:
             handler = logging.StreamHandler(sys.stdout)

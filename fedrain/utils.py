@@ -25,6 +25,10 @@ import psutil
 import torch
 from mpi4py import MPI
 
+PRINT_RANK = int(
+    os.getenv("PRINT_RANK", "0")
+)  # MPI rank that should print logs to stdout
+
 
 class RankFilter(logging.Filter):
     """Add rank information to log records for distributed logging.
@@ -33,7 +37,7 @@ class RankFilter(logging.Filter):
     even when logging happens outside of a LoggerAdapter context.
     """
 
-    def __init__(self, rank=0):
+    def __init__(self, rank=PRINT_RANK):
         super().__init__()
         self.rank = rank
 
@@ -43,7 +47,7 @@ class RankFilter(logging.Filter):
         return True
 
 
-def setup_logger(name, level=logging.INFO):
+def setup_logger(name, level=logging.INFO, logfile=None, print_rank=PRINT_RANK):
     """Create or return a configured logger.
 
     This helper creates a :class:`logging.Logger` with a stdout stream
@@ -57,6 +61,11 @@ def setup_logger(name, level=logging.INFO):
         Name of the logger.
     level : int, optional
         Logging level to apply to the logger (default: ``logging.INFO``).
+    print_rank : int, optional
+        MPI rank that should print logs to stdout (default: PRINT_RANK).
+        Ranks that do not match this value will have their handlers set to ``logging.NullHandler`` to avoid interleaved output.
+    logfile : str, optional
+        Path to a file to log messages to (default: None).
 
     Returns
     -------
@@ -82,13 +91,22 @@ def setup_logger(name, level=logging.INFO):
         rank_filter = RankFilter(rank)
         logger.addFilter(rank_filter)
 
-        if rank != 0:
+        # If this rank is not the designated print_rank and no logfile is specified
+        # use NullHandler to suppress output
+        if rank != print_rank and logfile is None:
             logger.addHandler(logging.NullHandler())
+        # Otherwise, set up handlers as normal (stdout and optional file)
         else:
-            handler = logging.StreamHandler(sys.stdout)
-            handler.setFormatter(formatter)
-            handler.addFilter(rank_filter)
-            logger.addHandler(handler)
+            if rank == print_rank:
+                stream_handler = logging.StreamHandler(sys.stdout)
+                stream_handler.setFormatter(formatter)
+                stream_handler.addFilter(rank_filter)
+                logger.addHandler(stream_handler)
+            if logfile is not None:
+                file_handler = logging.FileHandler(logfile)
+                file_handler.setFormatter(formatter)
+                file_handler.addFilter(rank_filter)
+                logger.addHandler(file_handler)
             logger = logging.LoggerAdapter(logger, {"rank": rank})
 
     logger.setLevel(level)

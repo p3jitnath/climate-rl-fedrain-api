@@ -65,14 +65,14 @@ class DDPGActor(nn.Module):
         self.register_buffer(
             "action_scale",
             torch.tensor(
-                (envs.action_space.high - envs.action_space.low) / 2.0,
+                (envs.single_action_space.high - envs.single_action_space.low) / 2.0,
                 dtype=torch.float32,
             ),
         )
         self.register_buffer(
             "action_bias",
             torch.tensor(
-                (envs.action_space.high + envs.action_space.low) / 2.0,
+                (envs.single_action_space.high + envs.single_action_space.low) / 2.0,
                 dtype=torch.float32,
             ),
         )

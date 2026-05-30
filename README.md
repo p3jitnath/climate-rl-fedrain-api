@@ -54,12 +54,10 @@ FedRAIN uses Conda for environment management.
 To set up a development environment:
 
 ```bash
-conda env create -f environment.yml
-conda activate venv
+conda env create -f environment.yml (or environment-cpu.yml)
+conda activate fedrain-venv
 pip install -e .
 ```
-
-If you require a GPU-specific PyTorch build, install it manually following [PyTorch’s official guide](https://pytorch.org/) before running the `pip install -e .` command.
 
 For air-gapped machines use the `--no-index --no-build-isolation` flags with `pip`.
 

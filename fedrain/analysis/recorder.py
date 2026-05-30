@@ -9,6 +9,7 @@ import csv
 import json
 import logging
 import os
+from datetime import datetime
 
 import numpy as np
 import torch
@@ -123,13 +124,18 @@ class Recorder:
             f"Initialised recorder for algorithm '{self.algorithm['name']}' in directory: {self.record_dir}"
         )
 
+        self.timestamp = datetime.now().strftime(
+            "%Y%m%d_%H%M%S"
+        )  # timestamp for file naming
         self.sr = StepRecorder(self.record_dir)
         self.sr.reset()
         self.record_algorithm()
 
     def record_algorithm(self):
         """Record the algorithm configuration to a JSON file in the record directory."""
-        config_path = os.path.join(self.record_dir, "algorithm_config.json")
+        config_path = os.path.join(
+            self.record_dir, f"algorithm_config_{self.timestamp}.json"
+        )
         with open(config_path, "w", encoding="utf-8") as f:
             json.dump(self.algorithm, f, indent=4)
         self.logger.info("Recorded algorithm configuration to %s" % config_path)
@@ -142,9 +148,11 @@ class Recorder:
         Subsequent calls append rows.
         """
         if idx is not None:
-            csv_path = os.path.join(self.record_dir, f"returns_{idx}.csv")
+            csv_path = os.path.join(
+                self.record_dir, f"returns_{self.timestamp}_{idx}.csv"
+            )
         else:
-            csv_path = os.path.join(self.record_dir, "returns.csv")
+            csv_path = os.path.join(self.record_dir, f"returns_{self.timestamp}.csv")
         if not os.path.exists(csv_path):
             with open(csv_path, "w", newline="") as fh:
                 writer = csv.writer(fh)

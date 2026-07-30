@@ -407,14 +407,40 @@ class DDPG(BaseAlgorithm):
             If True, load the replay buffer as well (default is True).
 
         """
+        required_files = [
+            "metadata.json",
+            "actor.pt",
+            "qf1.pt",
+            "target_actor.pt",
+            "qf1_target.pt",
+            "actor_opt.pt",
+            "q_opt.pt",
+        ]
+        if replay_buffer:
+            required_files.append("replay_buffer.pt")
+        missing_files = [
+            filename
+            for filename in required_files
+            if not os.path.isfile(os.path.join(folder_path, filename))
+        ]
+        if missing_files:
+            raise FileNotFoundError(
+                f"Checkpoint is incomplete in {folder_path}: "
+                f"missing {', '.join(missing_files)}"
+            )
+
         meta = {}
         meta_file = os.path.join(folder_path, "metadata.json")
-        if os.path.exists(meta_file):
-            try:
-                with open(meta_file, "r", encoding="utf-8") as fh:
-                    meta = json.load(fh)
-            except Exception:
-                self.logger.warning("Failed to read metadata.json")
+        try:
+            with open(meta_file, "r", encoding="utf-8") as fh:
+                meta = json.load(fh)
+        except (OSError, json.JSONDecodeError):
+            raise ValueError(f"Failed to read checkpoint metadata: {meta_file}")
+        missing_metadata = {"global_step", "seed"} - meta.keys()
+        if missing_metadata:
+            raise ValueError(
+                f"Checkpoint metadata is missing: {', '.join(sorted(missing_metadata))}"
+            )
 
         # Resolve and apply runtime device before loading state from disk.
         self.actor.to(self.device)
@@ -458,14 +484,14 @@ class DDPG(BaseAlgorithm):
                     )
                 )
             except Exception:
-                self.logger.warning("Failed to load actor optimizer state")
+                raise RuntimeError("Failed to load actor optimizer state")
         if os.path.exists(q_opt_file):
             try:
                 self.q_optimizer.load_state_dict(
                     torch.load(q_opt_file, map_location=self.device, weights_only=True)
                 )
             except Exception:
-                self.logger.warning("Failed to load critic optimizer state")
+                raise RuntimeError("Failed to load critic optimizer state")
 
         for optimizer in (self.actor_optimizer, self.q_optimizer):
             for state in optimizer.state.values():
@@ -483,20 +509,13 @@ class DDPG(BaseAlgorithm):
                 if isinstance(loaded, ReplayBuffer):
                     self.rb = loaded
                 elif isinstance(loaded, dict):
-                    try:
-                        self.rb.__dict__.update(loaded)
-                    except Exception:
-                        self.logger.warning(
-                            "Failed to apply replay buffer dict to current buffer"
-                        )
+                    self.rb.__dict__.update(loaded)
                 else:
-                    # unknown object type; attempt to replace if possible
-                    try:
-                        self.rb = loaded
-                    except Exception:
-                        self.logger.warning("Loaded replay buffer could not be applied")
-            except Exception as e:
-                self.logger.warning("Failed to load replay buffer: %s" % e)
+                    raise TypeError(
+                        f"Unsupported replay buffer type: {type(loaded).__name__}"
+                    )
+            except Exception:
+                raise RuntimeError("Failed to load replay buffer")
 
         if hasattr(self.rb, "device"):
             self.rb.device = self.device
@@ -508,16 +527,29 @@ class DDPG(BaseAlgorithm):
                     int(meta.get("global_step", self.global_step)) + timestep_offset
                 )
                 self.seed = int(meta.get("seed", self.seed))
-            except Exception:
-                self.logger.warning("Failed to read metadata.json")
+            except (TypeError, ValueError):
+                raise ValueError(f"Invalid checkpoint metadata: {meta_file}")
+        self.logger.info(
+            "Loaded checkpoint from %s at global_step=%d",
+            folder_path,
+            self.global_step,
+        )
+
+    def inference(self):
+        """Switch to deterministic inference mode."""
+        super().inference()
+        self.actor.eval()
+        self.qf1.eval()
+        self.target_actor.eval()
+        self.qf1_target.eval()
 
     def predict(self, obs):
         """Compute actions for given observations.
 
         When the agent has not yet collected enough experience (global
         step < learning_starts) actions are sampled from the environment's
-        action space. Otherwise the actor network is used with added
-        exploration noise.
+        action space. Otherwise the actor network is used, with exploration
+        noise added only during training.
         """
         if self.train and self.global_step < self.learning_starts:
             actions = np.array(
@@ -529,9 +561,12 @@ class DDPG(BaseAlgorithm):
         else:
             with torch.no_grad():
                 actions = self.actor(torch.Tensor(obs).to(self.device))
-                actions += torch.normal(
-                    0, self.actor.action_scale * self.exploration_noise
-                )
+                if self.train:
+                    actions += (
+                        torch.randn_like(actions)
+                        * self.actor.action_scale
+                        * self.exploration_noise
+                    )
                 actions = (
                     actions.cpu()
                     .numpy()

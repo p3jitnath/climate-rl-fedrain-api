@@ -103,8 +103,8 @@ class BaseAlgorithm:
     def inference(self):
         """Perform inference using the algorithm.
 
-        This method can be called to switch the algorithm into inference mode.
-        which may involve setting internal flags or adjusting behavior to disable training-specific features (such as exploration noise or gradient updates). The exact behavior of this method depends on the concrete implementation in subclasses.
+        This method can be called to switch the algorithm into inference mode, which may involve setting internal flags or adjusting behavior to disable training-specific features (such as exploration noise or gradient updates).
+        The exact behavior of this method depends on the concrete implementation in subclasses.
         """
         self.train = False
         self.algorithm["train"] = False

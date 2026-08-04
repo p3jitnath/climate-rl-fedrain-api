@@ -236,8 +236,6 @@ dependencies:
   - ml_dtypes=0.4.0
   - mpg123=1.32.9
   - msgpack-python=1.1.2
-  - mpi=1.0.1=mpich
-  - mpich=4.2.3
   - multidict=6.7.1
   - munkres=1.1.4
   - namex=0.1.0

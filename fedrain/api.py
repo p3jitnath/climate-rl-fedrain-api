@@ -23,6 +23,7 @@ import os
 import tempfile
 
 from fedrain.algorithms.ddpg import DDPG
+from fedrain.algorithms.stochastic import Stochastic
 
 
 class FedRAIN:
@@ -85,9 +86,12 @@ class FedRAIN:
         if name.upper() == "DDPG":
             agent = DDPG(*args, **kwargs)
             return agent
+        elif name.upper() == "STOCHASTIC":
+            agent = Stochastic(*args, **kwargs)
+            return agent
         else:
             raise ValueError(
-                f"Algorithm '{name}' is not supported by FedRAIN. Please choose a valid RL algorithm (e.g., 'DDPG')."
+                f"Algorithm '{name}' is not supported by FedRAIN. Please choose a valid RL algorithm (e.g., 'DDPG' or 'STOCHASTIC')."
             )
 
     def save_weights(self, agent, folder=None, timestep_offset=-1, replay_buffer=True):

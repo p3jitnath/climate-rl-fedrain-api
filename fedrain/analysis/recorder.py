@@ -75,8 +75,8 @@ class StepRecorder:
         ----------
         global_step : int
             Global step number.
-        actor : torch.nn.Module
-            Actor network model.
+        actor : torch.nn.Module or None
+            Actor network model, or ``None`` for algorithms without a policy.
         episodic_return : float
             Episodic return value.
         """
@@ -87,7 +87,7 @@ class StepRecorder:
                 "next_obs": np.array(self.next_obs).squeeze(),
                 "actions": np.array(self.actions).squeeze(),
                 "rewards": np.array(self.rewards).squeeze(),
-                "actor": actor.state_dict(),
+                "actor": actor.state_dict() if actor is not None else None,
                 "episodic_return": episodic_return,
             },
             f"{self.record_dir}/step_{global_step}.pth",

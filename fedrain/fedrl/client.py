@@ -8,6 +8,7 @@ process. It also includes a small factory helper used by the server.
 import logging
 import multiprocessing as mp
 import os
+import time
 
 import flwr as fl
 import numpy as np
@@ -39,7 +40,15 @@ class FlowerClient(fl.client.NumPyClient):
 
     """
 
-    def __init__(self, seed, cid, fn, actor, num_steps):
+    def __init__(
+        self,
+        seed,
+        cid,
+        fn,
+        actor,
+        num_steps,
+        attach_existing=False,
+    ):
         """Create a Flower client adapter and (optionally) start a worker.
 
         Parameters
@@ -54,6 +63,8 @@ class FlowerClient(fl.client.NumPyClient):
             Local actor instance used to read/write parameter arrays.
         num_steps : int
             Number of local steps to run during ``fit`` (reported to server).
+        attach_existing : bool, optional
+            If ``True``, connect to an externally launched client process.
 
         """
         super().__init__()
@@ -71,7 +82,7 @@ class FlowerClient(fl.client.NumPyClient):
         self.redis = smartredis.Client(address=self.REDIS_ADDRESS, cluster=False)
         self.logger.debug("Connected to Redis server: %s" % self.REDIS_ADDRESS)
 
-        is_alive = self.redis.tensor_exists(f"SIGALIVE_S{self.cid}")
+        is_alive = attach_existing or self.redis.tensor_exists(f"SIGALIVE_S{self.cid}")
         self.logger.debug("is_alive: %s" % is_alive)
         if not is_alive:
             try:
@@ -124,7 +135,7 @@ class FlowerClient(fl.client.NumPyClient):
             while not self.redis.tensor_exists(
                 f"actor_network_weights_c2g_s{self.cid}"
             ):
-                continue
+                time.sleep(0.01)
 
             actor_weights = self.redis.get_tensor(
                 f"actor_network_weights_c2g_s{self.cid}"
@@ -173,7 +184,13 @@ class FlowerClient(fl.client.NumPyClient):
         return (updated_parameters, self.num_steps, {})
 
 
-def generate_client_fn(seed, fn, actor, num_steps):
+def generate_client_fn(
+    seed,
+    fn,
+    actor,
+    num_steps,
+    attach_existing=False,
+):
     """Return a Flower-compatible client factory function.
 
     The returned function expects a Flower client context and produces a
@@ -190,6 +207,8 @@ def generate_client_fn(seed, fn, actor, num_steps):
         Actor instance to share with clients.
     num_steps : int
         Number of local steps to report for each ``fit`` call.
+    attach_existing : bool, optional
+        If ``True``, attach Flower bridges to externally launched clients.
 
     Returns
     -------
@@ -200,8 +219,25 @@ def generate_client_fn(seed, fn, actor, num_steps):
     """
 
     def client_fn(context):
+        """Construct one Flower client from its simulation context.
+
+        Parameters
+        ----------
+        context : flwr.common.Context
+            Context containing the client partition identifier.
+
+        Returns
+        -------
+        flwr.client.Client
+            Flower protocol client wrapping :class:`FlowerClient`.
+        """
         return FlowerClient(
-            seed, int(context.node_config["partition-id"]), fn, actor, num_steps
+            seed,
+            int(context.node_config["partition-id"]),
+            fn,
+            actor,
+            num_steps,
+            attach_existing=attach_existing,
         ).to_client()
 
     return client_fn

@@ -13,10 +13,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from stable_baselines3.common.buffers import ReplayBuffer
 
 from fedrain.algorithms.base import BaseAlgorithm
 from fedrain.analysis.recorder import Recorder
+from fedrain.exploration import make_exploration_strategy
 from fedrain.fedrl import FedRL
 from fedrain.utils import (
     detect_device,
@@ -190,6 +190,9 @@ class DDPG(BaseAlgorithm):
     policy_frequency : int, optional
         How often (in gradient steps) the actor/target networks are updated
         relative to the critic (default 2).
+    gradient_steps : int, optional
+        Number of critic gradient updates performed after each environment
+        step once learning has started (default 1).
     noise_clip : float, optional
         Clipping value for exploration noise (default 0.5).
     actor_layer_size : int, optional
@@ -206,10 +209,15 @@ class DDPG(BaseAlgorithm):
     record_dir : str or None, optional
         Directory where episodic-return record files are written.  Defaults
         to the ``$TMPDIR`` environment variable (or ``/tmp`` if unset).
+    retain_latest_only : bool, optional
+        If True, retain only the latest step-data file (default False).
     train : bool, optional
         If True, the agent will perform training updates in the ``update``
         method. If False, the agent will only collect experience without updating the networks.
     """
+
+    algorithm_name = "DDPG"
+    actor_class = DDPGActor
 
     def __init__(
         self,
@@ -222,8 +230,11 @@ class DDPG(BaseAlgorithm):
         tau=0.005,
         batch_size=256,
         exploration_noise=0.1,
+        exploration_strategy="independent",
+        exploration_smoothing_passes=2,
         learning_starts=1000,
         policy_frequency=2,
+        gradient_steps=1,
         noise_clip=0.5,
         actor_layer_size=256,
         critic_layer_size=256,
@@ -231,9 +242,66 @@ class DDPG(BaseAlgorithm):
         level=logging.DEBUG,
         fedRLConfig=None,
         record_dir=None,
+        retain_latest_only=False,
+        record_step_data=True,
         train=True,
+        inference_only=False,
     ):
         """Initialize the DDPG agent and its components.
+
+        Parameters
+        ----------
+        envs : gym.Env or vectorized env
+            Environment providing observation and action spaces.
+        seed : int
+            Environment reset seed.
+        n_envs : int, optional
+            Number of parallel environments.
+        learning_rate : float, optional
+            Actor and critic learning rate.
+        buffer_size : int, optional
+            Replay-buffer capacity.
+        gamma : float, optional
+            Discount factor.
+        tau : float, optional
+            Target-network soft-update coefficient.
+        batch_size : int, optional
+            Replay mini-batch size.
+        exploration_noise : float, optional
+            Actor-noise scale.
+        exploration_strategy : {"independent", "vertical"}, optional
+            Exploration-noise correlation strategy.
+        exploration_smoothing_passes : int, optional
+            Smoothing passes for vertical exploration.
+        learning_starts : int, optional
+            First step eligible for gradient updates.
+        policy_frequency : int, optional
+            Critic updates between actor updates.
+        gradient_steps : int, optional
+            Gradient updates per rewarded environment step.
+        noise_clip : float, optional
+            Retained noise-clipping configuration value.
+        actor_layer_size : int, optional
+            Actor hidden-layer width.
+        critic_layer_size : int, optional
+            Critic hidden-layer width.
+        device : str, optional
+            PyTorch device or ``"auto"``.
+        level : int, optional
+            Logger level.
+        fedRLConfig : dict, optional
+            Federated-learning configuration.
+        record_dir : path-like, optional
+            Rollout-record directory.
+        retain_latest_only : bool, optional
+            Whether to retain only the newest step-data file.
+        record_step_data : bool, optional
+            Whether to retain full observation and action trajectories.
+        train : bool, optional
+            Whether prediction includes exploration and updates train models.
+        inference_only : bool, optional
+            Construct only the actor for checkpoint-based inference. Training
+            state is unavailable; load with ``actor_only=True``.
 
         Notes
         -----
@@ -244,7 +312,7 @@ class DDPG(BaseAlgorithm):
         """
         super().__init__()
 
-        self.name = "DDPG"
+        self.name = self.algorithm_name
 
         self.envs = envs
         self.seed = seed
@@ -255,15 +323,24 @@ class DDPG(BaseAlgorithm):
         self.tau = tau
         self.batch_size = batch_size
         self.exploration_noise = exploration_noise
+        self.exploration_strategy = exploration_strategy
+        self.exploration_smoothing_passes = exploration_smoothing_passes
+        self.exploration = make_exploration_strategy(
+            exploration_strategy,
+            smoothing_passes=exploration_smoothing_passes,
+        )
         self.learning_starts = learning_starts
         self.policy_frequency = policy_frequency
+        self.gradient_steps = gradient_steps
         self.noise_clip = noise_clip
         self.actor_layer_size = actor_layer_size
         self.critic_layer_size = critic_layer_size
         self.device = detect_device(device)
         self.logger = setup_logger(self.name, level)
         self.fedRLConfig = fedRLConfig
-        self.train = train
+        self.inference_only = inference_only
+        self.train = train and not inference_only
+        self.record_step_data = record_step_data
 
         self.algorithm = {
             "name": self.name.lower(),
@@ -273,8 +350,11 @@ class DDPG(BaseAlgorithm):
             "tau": self.tau,
             "batch_size": self.batch_size,
             "exploration_noise": self.exploration_noise,
+            "exploration_strategy": self.exploration_strategy,
+            "exploration_smoothing_passes": (self.exploration_smoothing_passes),
             "learning_starts": self.learning_starts,
             "policy_frequency": self.policy_frequency,
+            "gradient_steps": self.gradient_steps,
             "noise_clip": self.noise_clip,
             "actor_layer_size": self.actor_layer_size,
             "critic_layer_size": self.critic_layer_size,
@@ -289,13 +369,23 @@ class DDPG(BaseAlgorithm):
             self.algorithm["fedRLConfig"] = self.fedRLConfig
 
         self.recorder = Recorder(
-            algorithm=self.algorithm, record_dir=record_dir, level=level
+            algorithm=self.algorithm,
+            record_dir=record_dir,
+            level=level,
+            retain_latest_only=retain_latest_only,
         )
 
-        self.actor = DDPGActor(self.envs, self.actor_layer_size).to(self.device)
+        self.actor = self.actor_class(self.envs, self.actor_layer_size).to(self.device)
+        if self.inference_only:
+            self.global_step = 1
+            self.gradient_step = 0
+            self.actor.eval()
+            return
         self.qf1 = DDPGCritic(self.envs, self.critic_layer_size).to(self.device)
         self.qf1_target = DDPGCritic(self.envs, self.critic_layer_size).to(self.device)
-        self.target_actor = DDPGActor(self.envs, self.actor_layer_size).to(self.device)
+        self.target_actor = self.actor_class(self.envs, self.actor_layer_size).to(
+            self.device
+        )
 
         self.target_actor.load_state_dict(self.actor.state_dict())
         self.qf1_target.load_state_dict(self.qf1.state_dict())
@@ -307,7 +397,29 @@ class DDPG(BaseAlgorithm):
             list(self.actor.parameters()), lr=self.learning_rate
         )
 
-        self.rb = ReplayBuffer(
+        self.rb = self.create_replay_buffer()
+
+        if self.fedRLConfig is not None:
+            self.fedRL = FedRL(self.actor, self.fedRLConfig["cid"], self.logger)
+            if not self.fedRLConfig.get("defer_initial_exchange", False):
+                self.fedRL.save_weights(0)
+                self.fedRL.load_weights(0)
+
+        self.obs, _ = envs.reset(seed=self.seed)
+        self.global_step = 1
+        self.gradient_step = 0
+
+    def create_replay_buffer(self):
+        """Create replay storage for the agent's environment layout.
+
+        Returns
+        -------
+        ReplayBuffer
+            Standard transition buffer for vectorised environments.
+        """
+        from stable_baselines3.common.buffers import ReplayBuffer
+
+        return ReplayBuffer(
             self.buffer_size,
             self.envs.single_observation_space,
             self.envs.single_action_space,
@@ -316,13 +428,19 @@ class DDPG(BaseAlgorithm):
             handle_timeout_termination=False,
         )
 
-        if self.fedRLConfig is not None:
-            self.fedRL = FedRL(self.actor, self.fedRLConfig["cid"], self.logger)
-            self.fedRL.save_weights(0)
-            self.fedRL.load_weights(0)
+    def begin_federated_round(self):
+        """Load the Flower actor at the start of a local training round."""
+        if self.fedRLConfig is None:
+            return
+        self.fedRL.load_weights(self.global_step)
+        self.target_actor.load_state_dict(self.actor.state_dict())
 
-        self.obs, _ = envs.reset(seed=self.seed)
-        self.global_step = 1
+    def load_federated_actor(self, actor_path):
+        """Load a persisted global actor for frozen inference."""
+        actor_state = torch.load(actor_path, map_location=self.device)
+        self.actor.load_state_dict(actor_state)
+        if not self.inference_only:
+            self.target_actor.load_state_dict(actor_state)
 
     def save(self, folder_path, timestep_offset=-1, replay_buffer=True):
         """Save model weights, optimizers and optionally replay buffer to *folder_path*.
@@ -384,6 +502,7 @@ class DDPG(BaseAlgorithm):
 
         meta = {
             "global_step": int(self.global_step) + timestep_offset,
+            "gradient_step": int(self.gradient_step),
             "seed": int(self.seed),
             "device": str(self.device),
         }
@@ -392,7 +511,9 @@ class DDPG(BaseAlgorithm):
         ) as fh:
             json.dump(meta, fh, indent=4)
 
-    def load(self, folder_path, timestep_offset=1, replay_buffer=True):
+    def load(
+        self, folder_path, timestep_offset=1, replay_buffer=True, actor_only=False
+    ):
         """Load model weights, optimizers and optionally replay buffer from *folder_path*.
 
         Parameters
@@ -406,7 +527,15 @@ class DDPG(BaseAlgorithm):
         replay_buffer : bool, optional
             If True, load the replay buffer as well (default is True).
 
+        actor_only : bool, optional
+            Restore only the actor and metadata for inference. Requires
+            ``replay_buffer=False``; other training state is not restored.
+
         """
+        if actor_only and replay_buffer:
+            raise ValueError("Actor-only loading requires replay_buffer=False")
+        if self.inference_only and not actor_only:
+            raise ValueError("Inference-only agents require actor_only=True")
         required_files = [
             "metadata.json",
             "actor.pt",
@@ -416,6 +545,8 @@ class DDPG(BaseAlgorithm):
             "actor_opt.pt",
             "q_opt.pt",
         ]
+        if actor_only:
+            required_files = ["metadata.json", "actor.pt"]
         if replay_buffer:
             required_files.append("replay_buffer.pt")
         missing_files = [
@@ -441,6 +572,22 @@ class DDPG(BaseAlgorithm):
             raise ValueError(
                 f"Checkpoint metadata is missing: {', '.join(sorted(missing_metadata))}"
             )
+
+        if actor_only:
+            self.actor.to(self.device)
+            self.actor.load_state_dict(
+                torch.load(
+                    os.path.join(folder_path, "actor.pt"),
+                    map_location=self.device,
+                    weights_only=True,
+                )
+            )
+            self.global_step = int(meta["global_step"]) + timestep_offset
+            self.gradient_step = int(meta.get("gradient_step", self.gradient_step))
+            self.seed = int(meta["seed"])
+            self.inference()
+            self.logger.info("Loaded inference actor from %s", folder_path)
+            return
 
         # Resolve and apply runtime device before loading state from disk.
         self.actor.to(self.device)
@@ -506,14 +653,17 @@ class DDPG(BaseAlgorithm):
                 loaded = torch.load(
                     rb_file, map_location=self.device, weights_only=False
                 )
-                if isinstance(loaded, ReplayBuffer):
-                    self.rb = loaded
-                elif isinstance(loaded, dict):
+                if isinstance(loaded, dict):
                     self.rb.__dict__.update(loaded)
                 else:
-                    raise TypeError(
-                        f"Unsupported replay buffer type: {type(loaded).__name__}"
-                    )
+                    from stable_baselines3.common.buffers import ReplayBuffer
+
+                    if isinstance(loaded, ReplayBuffer):
+                        self.rb = loaded
+                    else:
+                        raise TypeError(
+                            f"Unsupported replay buffer type: {type(loaded).__name__}"
+                        )
             except Exception:
                 raise RuntimeError("Failed to load replay buffer")
 
@@ -526,6 +676,7 @@ class DDPG(BaseAlgorithm):
                 self.global_step = (
                     int(meta.get("global_step", self.global_step)) + timestep_offset
                 )
+                self.gradient_step = int(meta.get("gradient_step", self.gradient_step))
                 self.seed = int(meta.get("seed", self.seed))
             except (TypeError, ValueError):
                 raise ValueError(f"Invalid checkpoint metadata: {meta_file}")
@@ -539,6 +690,8 @@ class DDPG(BaseAlgorithm):
         """Switch to deterministic inference mode."""
         super().inference()
         self.actor.eval()
+        if self.inference_only:
+            return
         self.qf1.eval()
         self.target_actor.eval()
         self.qf1_target.eval()
@@ -546,26 +699,34 @@ class DDPG(BaseAlgorithm):
     def predict(self, obs):
         """Compute actions for given observations.
 
+        Parameters
+        ----------
+        obs : array_like
+            Batched environment observations.
+
+        Returns
+        -------
+        numpy.ndarray
+            Sampled or actor-predicted actions clipped to environment bounds.
+
         When the agent has not yet collected enough experience (global
         step < learning_starts) actions are sampled from the environment's
         action space. Otherwise the actor network is used, with exploration
         noise added only during training.
         """
         if self.train and self.global_step < self.learning_starts:
-            actions = np.array(
-                [
-                    self.envs.single_action_space.sample()
-                    for _ in range(self.envs.num_envs)
-                ]
+            actions = self.exploration.sample_initial_actions(
+                self.envs.single_action_space,
+                self.envs.num_envs,
             )
         else:
-            with torch.no_grad():
+            with torch.no_grad() if self.train else torch.inference_mode():
                 actions = self.actor(torch.Tensor(obs).to(self.device))
                 if self.train:
-                    actions += (
-                        torch.randn_like(actions)
-                        * self.actor.action_scale
-                        * self.exploration_noise
+                    actions = self.exploration.add_actor_noise(
+                        actions,
+                        self.actor.action_scale,
+                        self.exploration_noise,
                     )
                 actions = (
                     actions.cpu()
@@ -618,57 +779,65 @@ class DDPG(BaseAlgorithm):
             returns = np.array(returns)
             avg_return = np.mean(returns)
             self.recorder.record_episodic_return(avg_return, self.global_step)
-            self.recorder.sr.save(self.global_step, self.actor, returns)
+            if self.record_step_data:
+                self.recorder.sr.save(self.global_step, self.actor, returns)
 
         real_next_obs = next_obs.copy()
         for idx, trunc in enumerate(truncations):
             if trunc:
                 real_next_obs[idx] = infos["final_observation"][idx]
         self.rb.add(self.obs, real_next_obs, actions, rewards, terminations, infos)
-        self.recorder.sr.add(self.global_step, self.obs, next_obs, actions, rewards)
+        if self.record_step_data:
+            self.recorder.sr.add(
+                self.global_step,
+                self.obs,
+                next_obs,
+                actions,
+                rewards,
+            )
 
         self.obs = next_obs
 
         if self.train and self.global_step > self.learning_starts:
-
-            data = self.rb.sample(self.batch_size)
-            with torch.no_grad():
-                next_state_actions = self.target_actor(data.next_observations)
-                qf1_next_target = self.qf1_target(
-                    data.next_observations, next_state_actions
-                )
-                target_q_values = data.rewards.flatten() + (
-                    1 - data.dones.flatten()
-                ) * self.gamma * (qf1_next_target).view(-1)
-
-            qf1_a_values = self.qf1(data.observations, data.actions).view(-1)
-            qf1_loss = F.mse_loss(qf1_a_values, target_q_values)
-
-            self.q_optimizer.zero_grad()
-            qf1_loss.backward()
-            self.q_optimizer.step()
-
-            if self.global_step % self.policy_frequency == 0:
-                actor_loss = -self.qf1(
-                    data.observations, self.actor(data.observations)
-                ).mean()
-                self.actor_optimizer.zero_grad()
-                actor_loss.backward()
-                self.actor_optimizer.step()
-
-            if self.global_step % self.policy_frequency == 0:
-                for param, target_param in zip(
-                    self.actor.parameters(), self.target_actor.parameters()
-                ):
-                    target_param.data.copy_(
-                        self.tau * param.data + (1 - self.tau) * target_param.data
+            for _ in range(self.gradient_steps):
+                data = self.rb.sample(self.batch_size)
+                with torch.no_grad():
+                    next_state_actions = self.target_actor(data.next_observations)
+                    qf1_next_target = self.qf1_target(
+                        data.next_observations, next_state_actions
                     )
-                for param, target_param in zip(
-                    self.qf1.parameters(), self.qf1_target.parameters()
-                ):
-                    target_param.data.copy_(
-                        self.tau * param.data + (1 - self.tau) * target_param.data
-                    )
+                    target_q_values = data.rewards.flatten() + (
+                        1 - data.dones.flatten()
+                    ) * self.gamma * (qf1_next_target).view(-1)
+
+                qf1_a_values = self.qf1(data.observations, data.actions).view(-1)
+                qf1_loss = F.mse_loss(qf1_a_values, target_q_values)
+
+                self.q_optimizer.zero_grad()
+                qf1_loss.backward()
+                self.q_optimizer.step()
+                self.gradient_step += 1
+
+                if self.gradient_step % self.policy_frequency == 0:
+                    actor_loss = -self.qf1(
+                        data.observations, self.actor(data.observations)
+                    ).mean()
+                    self.actor_optimizer.zero_grad()
+                    actor_loss.backward()
+                    self.actor_optimizer.step()
+
+                    for param, target_param in zip(
+                        self.actor.parameters(), self.target_actor.parameters()
+                    ):
+                        target_param.data.copy_(
+                            self.tau * param.data + (1 - self.tau) * target_param.data
+                        )
+                    for param, target_param in zip(
+                        self.qf1.parameters(), self.qf1_target.parameters()
+                    ):
+                        target_param.data.copy_(
+                            self.tau * param.data + (1 - self.tau) * target_param.data
+                        )
 
         if self.train and self.fedRLConfig is not None and "final_info" in infos:
             if (
@@ -678,8 +847,7 @@ class DDPG(BaseAlgorithm):
             ):
                 # self.logger.debug("%s - Saving local weights" % self.seed)
                 self.fedRL.save_weights(self.global_step)
-
-                # self.logger.debug("%s - Loading global weights" % self.seed)
-                self.fedRL.load_weights(self.global_step)
+                if self.fedRLConfig.get("load_after_fit", True):
+                    self.fedRL.load_weights(self.global_step)
 
         self.global_step += 1

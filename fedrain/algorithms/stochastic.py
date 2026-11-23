@@ -36,6 +36,8 @@ class Stochastic(BaseAlgorithm):
     record_dir : str or None, optional
         Directory where episodic-return record files are written. Defaults
         to the ``$TMPDIR`` environment variable or ``/tmp/climaterl/records``.
+    retain_latest_only : bool, optional
+        If True, retain only the latest step-data file (default False).
     train : bool, optional
         Algorithm mode recorded in the run metadata (default True). Action
         selection remains stochastic in both training and inference modes.
@@ -49,9 +51,27 @@ class Stochastic(BaseAlgorithm):
         n_envs=1,
         level=logging.DEBUG,
         record_dir=None,
+        retain_latest_only=False,
         train=True,
     ):
         """Initialize the random-action agent and reset its environments.
+
+        Parameters
+        ----------
+        envs : gym.Env or vectorized env
+            Environment providing the vector action space.
+        seed : int
+            Environment reset seed.
+        n_envs : int, optional
+            Number of parallel environments.
+        level : int, optional
+            Logger level.
+        record_dir : path-like, optional
+            Output directory for rollout records.
+        retain_latest_only : bool, optional
+            Whether to retain only the newest step-data file.
+        train : bool, optional
+            Mode stored in algorithm metadata.
 
         Notes
         -----
@@ -77,6 +97,7 @@ class Stochastic(BaseAlgorithm):
             algorithm=self.algorithm,
             record_dir=record_dir,
             level=level,
+            retain_latest_only=retain_latest_only,
         )
         self.obs, _ = self.envs.reset(seed=self.seed)
         self.global_step = 1

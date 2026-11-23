@@ -27,15 +27,6 @@ class BaseAlgorithm:
 
         Subclasses that override ``__init__`` should call ``super().__init__()``
         to ensure proper initialization of the base class.
-
-        Parameters
-        ----------
-        None
-
-        Returns
-        -------
-        None
-
         """
         # Base class has no state by default; subclasses may initialize
         # algorithm-specific attributes here.
@@ -101,11 +92,7 @@ class BaseAlgorithm:
         raise NotImplementedError("update() must be implemented by subclass.")
 
     def inference(self):
-        """Perform inference using the algorithm.
-
-        This method can be called to switch the algorithm into inference mode, which may involve setting internal flags or adjusting behavior to disable training-specific features (such as exploration noise or gradient updates).
-        The exact behavior of this method depends on the concrete implementation in subclasses.
-        """
+        """Disable training behaviour and exploration for inference."""
         self.train = False
         self.algorithm["train"] = False
         self.logger.info("Switched to inference mode")

@@ -18,20 +18,33 @@ from fedrain.utils import setup_logger
 
 
 class StepRecorder:
-    """Recorder for step data (observations, actions, rewards) during training.
+    """Recorder retaining the latest step data during training.
 
     This class accumulates step data in memory and saves it to a file when
-    requested. It can be used to record detailed step information for debugging
-    or analysis purposes.
+    requested. After a successful save, it removes older ``step_*.pth`` files
+    from the same directory.
 
     Parameters
     ----------
     record_dir : str
         Directory where step data files will be saved. Each file will be named with the global step number (e.g., "step_1000.pth").
+    retain_latest_only : bool, optional
+        If True, remove older step-data files after saving the latest one
+        (default False).
     """
 
-    def __init__(self, record_dir):
+    def __init__(self, record_dir, retain_latest_only=False):
+        """Initialise the step recorder.
+
+        Parameters
+        ----------
+        record_dir : path-like
+            Directory for step-data files.
+        retain_latest_only : bool, optional
+            Whether each save removes older step-data files.
+        """
         self.record_dir = record_dir
+        self.retain_latest_only = retain_latest_only
         self.reset()
 
     def _clear(self):
@@ -80,6 +93,10 @@ class StepRecorder:
         episodic_return : float
             Episodic return value.
         """
+        output_path = os.path.join(
+            self.record_dir,
+            f"step_{global_step}.pth",
+        )
         torch.save(
             {
                 "global_steps": np.array(self.global_steps).squeeze(),
@@ -90,8 +107,16 @@ class StepRecorder:
                 "actor": actor.state_dict() if actor is not None else None,
                 "episodic_return": episodic_return,
             },
-            f"{self.record_dir}/step_{global_step}.pth",
+            output_path,
         )
+        if self.retain_latest_only:
+            for filename in os.listdir(self.record_dir):
+                if (
+                    filename.startswith("step_")
+                    and filename.endswith(".pth")
+                    and filename != os.path.basename(output_path)
+                ):
+                    os.remove(os.path.join(self.record_dir, filename))
         self.reset()
 
 
@@ -109,9 +134,30 @@ class Recorder:
         the environment ``TMPDIR`` is used, falling back to ``/tmp``.
     level : int, optional
         Logging level for the recorder's logger (default is logging.DEBUG).
+    retain_latest_only : bool, optional
+        If True, retain only the latest step-data file (default False).
     """
 
-    def __init__(self, algorithm, record_dir=None, level=logging.DEBUG):
+    def __init__(
+        self,
+        algorithm,
+        record_dir=None,
+        level=logging.DEBUG,
+        retain_latest_only=False,
+    ):
+        """Initialise algorithm, return, and step-data recording.
+
+        Parameters
+        ----------
+        algorithm : dict
+            Serialisable algorithm configuration.
+        record_dir : path-like, optional
+            Output directory, or ``TMPDIR`` when omitted.
+        level : int, optional
+            Logger level.
+        retain_latest_only : bool, optional
+            Whether to retain only the latest step-data file.
+        """
         self._file_path = None
         self.algorithm = algorithm
         self.record_dir = os.path.join(
@@ -127,12 +173,15 @@ class Recorder:
         self.timestamp = datetime.now().strftime(
             "%Y%m%d_%H%M%S"
         )  # timestamp for file naming
-        self.sr = StepRecorder(self.record_dir)
+        self.sr = StepRecorder(
+            self.record_dir,
+            retain_latest_only=retain_latest_only,
+        )
         self.sr.reset()
         self.record_algorithm()
 
     def record_algorithm(self):
-        """Record the algorithm configuration to a JSON file in the record directory."""
+        """Write the algorithm configuration to a timestamped JSON file."""
         config_path = os.path.join(
             self.record_dir, f"algorithm_config_{self.timestamp}.json"
         )
@@ -142,6 +191,15 @@ class Recorder:
 
     def record_episodic_return(self, episodic_return, global_step, idx=None):
         """Append a row (algorithm, global_step, episodic_return) to the CSV.
+
+        Parameters
+        ----------
+        episodic_return : float
+            Mean or individual completed-episode return.
+        global_step : int
+            Agent interaction step.
+        idx : int, optional
+            Optional environment index used in the CSV filename.
 
         The first call creates a new timestamped CSV in ``record_dir`` (or
         the recorder's configured directory / TMPDIR) and writes a header.

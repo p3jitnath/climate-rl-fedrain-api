@@ -5,6 +5,7 @@ and retrieve flattened PyTorch actor parameters via a SmartRedis store.
 """
 
 import os
+import time
 
 import numpy as np
 import torch
@@ -89,7 +90,7 @@ class FedRL:
             while not self.redis.tensor_exists(
                 f"actor_network_weights_g2c_s{self.cid}"
             ):
-                pass
+                time.sleep(0.01)
 
             actor_weights = self.redis.get_tensor(
                 f"actor_network_weights_g2c_s{self.cid}"

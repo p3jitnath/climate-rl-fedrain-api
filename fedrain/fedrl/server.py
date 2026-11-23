@@ -5,6 +5,7 @@ Flower-based federated simulations in local experiments.
 """
 
 import functools
+import math
 import multiprocessing
 import subprocess
 
@@ -96,17 +97,33 @@ class Server:
     def __init__(self, with_redis=False):
         """Initialize the base Server process manager.
 
+        Parameters
+        ----------
+        with_redis : bool, optional
+            Whether to start and manage a local Redis process.
+
         The Server tracks started background processes and provides helpers
         to start and stop them.
         """
         self.process_fns, self._process_objs = [], []
+        self.with_redis = with_redis
         if with_redis:
-            self.with_redis = True
             self.redis = RedisServer()
             self.redis.start()
 
     def start_process(self, cmd):
-        """Start a background executable process running ``process_fn``."""
+        """Start a background executable process.
+
+        Parameters
+        ----------
+        cmd : str
+            Command split into executable arguments.
+
+        Returns
+        -------
+        subprocess.Popen
+            Started background process.
+        """
 
         proc = subprocess.Popen(
             cmd.split(),
@@ -123,7 +140,7 @@ class Server:
         Parameters
         ----------
         process_fn : callable
-            Function
+            Function executed by the child process.
 
         Returns
         -------
@@ -138,7 +155,22 @@ class Server:
         return proc
 
     def run(self, fn, *args, **kwargs):
-        """Run a function in a blocking manner."""
+        """Run a function in a blocking manner.
+
+        Parameters
+        ----------
+        fn : callable
+            Function to invoke.
+        *args : tuple
+            Positional arguments forwarded to ``fn``.
+        **kwargs : dict
+            Keyword arguments forwarded to ``fn``.
+
+        Returns
+        -------
+        object
+            Value returned by ``fn``.
+        """
         return fn(*args, **kwargs)
 
     def stop(self):
@@ -155,6 +187,18 @@ class Server:
     def serve(self, *args, **kwargs):
         """Serve method to be implemented by subclasses.
 
+        Parameters
+        ----------
+        *args : tuple
+            Positional arguments accepted by a concrete server.
+        **kwargs : dict
+            Keyword arguments accepted by a concrete server.
+
+        Raises
+        ------
+        NotImplementedError
+            Always raised by the base implementation.
+
         Subclasses should implement this method to start the federated
         learning simulation or server loop.
         """
@@ -169,7 +213,13 @@ class FLWRServer(Server):
     constructs a per-run client factory, and starts the simulation.
     """
 
-    def __init__(self, num_clients, num_rounds, strategy=FedAvg):
+    def __init__(
+        self,
+        num_clients,
+        num_rounds,
+        strategy=FedAvg,
+        with_redis=True,
+    ):
         """Create an FLWRServer configured for a local simulation.
 
         Parameters
@@ -180,16 +230,33 @@ class FLWRServer(Server):
             Number of federated training rounds.
         strategy : Strategy class, optional
             Flower strategy to use (default: FedAvg wrapper).
+        with_redis : bool, optional
+            Whether to launch a local Redis server. Disable when attaching to
+            a workflow-managed Redis service.
 
         """
-        super().__init__(with_redis=True)
+        super().__init__(with_redis=with_redis)
         self.num_clients = num_clients
         self.num_rounds = num_rounds
-        self.strategy = strategy(
-            min_fit_clients=num_clients,
-            min_available_clients=num_clients,
-            fraction_evaluate=0.0,
+        self.strategy = (
+            strategy(
+                min_fit_clients=num_clients,
+                min_available_clients=num_clients,
+                fraction_evaluate=0.0,
+            )
+            if isinstance(strategy, type)
+            else strategy
         )
+
+    def set_actor(self, actor):
+        """Set the actor template used by attached Flower clients.
+
+        Parameters
+        ----------
+        actor : torch.nn.Module
+            Actor whose parameter shapes define the Flower payload.
+        """
+        self.actor = actor
 
     def generate_actor(self, env_class, actor_class, layer_size):
         """Instantiate a template actor used by client processes.
@@ -213,6 +280,18 @@ class FLWRServer(Server):
     def set_client(self, *args, **kwargs):
         """Create a Flower client factory bound to the generated actor.
 
+        Parameters
+        ----------
+        *args : tuple
+            Positional arguments forwarded to ``generate_client_fn``.
+        **kwargs : dict
+            Keyword arguments forwarded to ``generate_client_fn``.
+
+        Raises
+        ------
+        RuntimeError
+            If no actor has been generated.
+
         The method requires that :meth:`generate_actor` has been called first.
         The generated client factory is stored on ``self.client_fn`` for use
         by :meth:`serve`.
@@ -235,7 +314,7 @@ class FLWRServer(Server):
             Number of GPUs to reserve for each simulated client.
 
         """
-        total_cpus = self.num_clients * cpus_per_client + 1
+        total_cpus = math.ceil(self.num_clients * cpus_per_client) + 1
         total_gpus = gpus_per_client
         ray_init_args = {
             "num_cpus": total_cpus,

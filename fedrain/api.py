@@ -6,13 +6,13 @@ configuring FedRAIN algorithm instances. It currently provides the
 algorithms (for example, DDPG) with the appropriate constructor
 arguments.
 
-Example:
--------
+Examples
+--------
 >>> from fedrain.api import FedRAIN
 >>> api = FedRAIN()
 >>> agent = api.set_algorithm('DDPG', envs, seed=0)
 
-Notes:
+Notes
 -----
 The available algorithm names are case-insensitive. New algorithms can be
 added by extending :meth:`FedRAIN.set_algorithm`.
@@ -22,7 +22,10 @@ added by extending :meth:`FedRAIN.set_algorithm`.
 import os
 import tempfile
 
+from fedrain.algorithms.column_ddpg import ColumnDDPG
 from fedrain.algorithms.ddpg import DDPG
+from fedrain.algorithms.forecast_bandit import ForecastBandit
+from fedrain.algorithms.shared_ddpg import SharedDDPG
 from fedrain.algorithms.stochastic import Stochastic
 
 
@@ -45,15 +48,6 @@ class FedRAIN:
 
         The base implementation has no state. Subclasses or future
         enhancements may add configuration options here.
-
-        Parameters
-        ----------
-        None
-
-        Returns
-        -------
-        None
-
         """
         pass
 
@@ -85,6 +79,14 @@ class FedRAIN:
         """
         if name.upper() == "DDPG":
             agent = DDPG(*args, **kwargs)
+            return agent
+        elif name.upper() == "COLUMN_DDPG":
+            agent = ColumnDDPG(*args, **kwargs)
+            return agent
+        elif name.upper() == "FORECAST_BANDIT":
+            return ForecastBandit(*args, **kwargs)
+        elif name.upper() == "SHARED_DDPG":
+            agent = SharedDDPG(*args, **kwargs)
             return agent
         elif name.upper() == "STOCHASTIC":
             agent = Stochastic(*args, **kwargs)
@@ -130,7 +132,9 @@ class FedRAIN:
             )
         return folder
 
-    def load_weights(self, agent, folder, timestep_offset=1, replay_buffer=True):
+    def load_weights(
+        self, agent, folder, timestep_offset=1, replay_buffer=True, actor_only=False
+    ):
         """Load an agent's weights and optionally its replay buffer from *folder*.
 
         Parameters
@@ -145,12 +149,19 @@ class FedRAIN:
             This can be used to adjust the global timestep if resuming from a checkpoint.
         replay_buffer : bool, optional
             If True, load the replay buffer as well (default is True).
+        actor_only : bool, optional
+            Restore only inference actor state when supported by the agent.
+            Requires ``replay_buffer=False``. Defaults to False.
         """
         if not os.path.isdir(folder):
             raise ValueError(f"Checkpoint folder does not exist: {folder}")
         if hasattr(agent, "load"):
+            load_options = {"actor_only": True} if actor_only else {}
             agent.load(
-                folder, timestep_offset=timestep_offset, replay_buffer=replay_buffer
+                folder,
+                timestep_offset=timestep_offset,
+                replay_buffer=replay_buffer,
+                **load_options,
             )
         else:
             raise AttributeError(

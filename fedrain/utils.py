@@ -19,10 +19,8 @@ import subprocess
 import sys
 import time
 
-import gymnasium as gym
 import numpy as np
 import psutil
-import torch
 from mpi4py import MPI
 
 PRINT_RANK = int(
@@ -38,10 +36,29 @@ class RankFilter(logging.Filter):
     """
 
     def __init__(self, rank=PRINT_RANK):
+        """Initialise the rank injected into unannotated records.
+
+        Parameters
+        ----------
+        rank : int, optional
+            MPI rank used when a record has no ``rank`` attribute.
+        """
         super().__init__()
         self.rank = rank
 
     def filter(self, record):
+        """Ensure a log record has rank metadata.
+
+        Parameters
+        ----------
+        record : logging.LogRecord
+            Record about to be emitted.
+
+        Returns
+        -------
+        bool
+            Always ``True`` so the record is retained.
+        """
         if not hasattr(record, "rank"):
             record.rank = self.rank
         return True
@@ -163,7 +180,16 @@ def make_env(
 
     """
 
+    import gymnasium as gym
+
     def thunk():
+        """Construct and wrap one seeded environment.
+
+        Returns
+        -------
+        gymnasium.Env
+            Time-limited, statistics-recording environment.
+        """
         env = env_class(render_mode=render_mode, **kwargs)
         env = gym.wrappers.TimeLimit(env, max_episode_steps=num_steps)
         if capture_video and env_idx == 0:
@@ -195,6 +221,8 @@ def set_seed(seed):
         Seed value to apply.
 
     """
+    import torch
+
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -280,19 +308,20 @@ def get_urandom_redis_port():
 
 
 def get_ssdb_redis_port():
-    """
-    Return the Redis port extracted from the SSDB environment variable.
+    """Return the Redis port extracted from the SSDB environment variable.
 
     Reads the SSDB environment variable, which is expected to be either a port
     ("6379") or a host:port string ("hostname:6379"), and returns the port as an int.
 
     Returns
     -------
-        int: Redis port number.
+    int
+        Redis port number.
 
     Raises
     ------
-        EnvironmentError: If the SSDB environment variable is not set.
+    EnvironmentError
+        If the ``SSDB`` environment variable is not set.
     """
     redis_port = os.getenv("SSDB")
     if not redis_port:
@@ -310,8 +339,8 @@ class RedisServer:
 
     Parameters
     ----------
-    redis_address : str, optional
-        Address to bind the redis-server process (default: "localhost")
+    redis_port : int, optional
+        TCP port bound by the Redis process.
 
     """
 
@@ -328,6 +357,25 @@ class RedisServer:
         self.redis_proc = None
 
     def _instantiate_redis_server(self, interface, rediscli_config):
+        """Start Redis and wait until its local socket accepts connections.
+
+        Parameters
+        ----------
+        interface : str
+            Network interface whose address is advertised through ``SSDB``.
+        rediscli_config : dict
+            Additional Redis command-line options.
+
+        Returns
+        -------
+        subprocess.Popen
+            Running Redis process.
+
+        Raises
+        ------
+        RuntimeError
+            If Redis is unavailable or does not become ready.
+        """
         redis_bin = shutil.which("redis-server")
         if redis_bin is None:
             raise RuntimeError(
@@ -394,7 +442,15 @@ class RedisServer:
             redis_proc.wait()
 
     def start(self, interface="lo", rediscli_config={}):
-        """Start a local redis-server and record its process handle."""
+        """Start a local Redis server and record its process handle.
+
+        Parameters
+        ----------
+        interface : str, optional
+            Network interface advertised to clients.
+        rediscli_config : dict, optional
+            Additional Redis command-line options.
+        """
         self.redis_proc = self._instantiate_redis_server(interface, rediscli_config)
 
     def stop(self):
@@ -417,6 +473,8 @@ def detect_device(device="auto"):
     str
         "cuda" if a CUDA compatible GPU is available, "xpu" if a INTEL GPU is available else "cpu".
     """
+    import torch
+
     if device == "auto":
         if torch.cuda.is_available():
             return "cuda"
@@ -450,6 +508,8 @@ def to_cpu_recursive(obj):
         returned unchanged.
 
     """
+    import torch
+
     if torch.is_tensor(obj):
         return obj.detach().cpu()
     if isinstance(obj, dict):
